@@ -281,12 +281,12 @@ export class BotCommandRouter {
 		const command = parseCommand(message.text);
 		if (!command && !this.storage.getBotDialog(message.chatId)) return;
 		if (!isOwner(message.chatId, this.ownerChatId))
-			return void (await this.client.sendText(
-				message.chatId,
-				command === "start" && !this.ownerChatId
-					? "Jobot ещё не настроен. Добавьте ID этого личного чата в TELEGRAM_BOT_CHAT_ID через pnpm bot:setup, затем перезапустите приложение."
-					: "У вас нет доступа к управлению Jobot.",
-			));
+			return void (command === "start" && !this.ownerChatId
+				? await this.client.sendText(
+						message.chatId,
+						"Jobot ещё не настроен. Добавьте ID этого личного чата в TELEGRAM_BOT_CHAT_ID через pnpm bot:setup, затем перезапустите приложение.",
+					)
+				: undefined);
 		if (command === "start")
 			return void (await this.client.sendText(
 				message.chatId,

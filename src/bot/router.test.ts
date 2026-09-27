@@ -58,7 +58,7 @@ test("parses only versioned callback data with valid profile IDs", () => {
 	});
 });
 
-test("router denies non-owner and cancels only the owner's active dialog", async () => {
+test("router ignores non-owner commands and cancels only the owner's active dialog", async () => {
 	const replies: Array<{ chatId: string; text: string }> = [];
 	const cleared: string[] = [];
 	const router = new BotCommandRouter(
@@ -81,12 +81,12 @@ test("router denies non-owner and cancels only the owner's active dialog", async
 	);
 
 	await router.handle({ chatId: "42", text: "/cancel" });
-	assert.match(replies[0].text, /нет доступа/i);
+	assert.equal(replies.length, 0);
 	assert.deepEqual(cleared, []);
 
 	await router.handle({ chatId: "-1005", text: "/cancel" });
 	assert.deepEqual(cleared, ["-1005"]);
-	assert.match(replies[1].text, /отменена/i);
+	assert.match(replies[0].text, /отменена/i);
 });
 
 test("start gives setup guidance only while owner is unconfigured", async () => {
