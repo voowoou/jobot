@@ -70,7 +70,7 @@ const HELP =
 	"/profiles edit <id> — изменить профиль, например: /profiles edit frontend\n" +
 	"/profiles toggle <id> — включить или выключить профиль, например: /profiles toggle frontend\n" +
 	"/profiles remove <id> — удалить профиль, например: /profiles remove frontend\n" +
-	"В мастере обязательные поля нельзя пропустить. Для необязательных полей отправьте «-». /cancel отменяет мастер.\n\n" +
+	"В мастере обязательные поля нельзя пропустить; для необязательных есть кнопка «Пропустить» или отправьте «-». При редактировании «=» сохраняет текущее значение. /cancel отменяет мастер.\n\n" +
 	"Источники\n" +
 	"/sources — показать режим и список источников\n" +
 	"/sources mode <all|allowlist|denylist> — например: /sources mode allowlist\n" +
@@ -103,7 +103,10 @@ type CallbackAction =
 	| "profile-toggle"
 	| "profile-delete"
 	| "profile-delete-confirm"
-	| "profile-delete-cancel";
+	| "profile-delete-cancel"
+	| "wizard-yes"
+	| "wizard-no"
+	| "wizard-skip";
 type Callback = {
 	action: CallbackAction;
 	profileId?: string;
@@ -114,6 +117,8 @@ const callbackData = (action: string, profileId?: string) =>
 	`v1:${action}${profileId ? `:${profileId}` : ""}`;
 export function parseCallback(data: string | undefined): Callback | undefined {
 	if (!data) return undefined;
+	if (/^v1:wizard-(yes|no|skip)$/.test(data))
+		return { action: data.slice(3) as CallbackAction };
 	const sourceMatch = data.match(/^v1:(sources-recent)(?::(\d{1,3}))?$/);
 	if (sourceMatch)
 		return { action: "sources-recent", page: Number(sourceMatch[2] ?? 0) };
@@ -178,6 +183,63 @@ const ask = (step: Step) =>
 		workFormats: "Форматы: remote: remote, удалённо; office: офис, или -:",
 		confirm: "Сохранить профиль? (да/нет)",
 	})[step];
+const optionalSteps: readonly Step[] = [
+	"context",
+	"exclude",
+	"grades",
+	"workFormats",
+];
+const stepNumber = (step: Step) => steps.indexOf(step) + 1;
+function wizardKeyboard(step: Step): InlineKeyboard | undefined {
+	if (step === "enabled" || step === "confirm")
+		return {
+			inline_keyboard: [
+				[
+					{ text: "Да", callback_data: callbackData("wizard-yes") },
+					{ text: "Нет", callback_data: callbackData("wizard-no") },
+				],
+			],
+		};
+	if (optionalSteps.includes(step))
+		return {
+			inline_keyboard: [
+				[{ text: "Пропустить", callback_data: callbackData("wizard-skip") }],
+			],
+		};
+}
+function currentValue(
+	step: Step,
+	profile: Partial<UserProfile> | undefined,
+): string {
+	if (!profile) return "—";
+	if (step === "workFormats")
+		return profile.workFormats
+			? Object.entries(profile.workFormats)
+					.map(([name, values]) => `${name}: ${values.join(", ")}`)
+					.join("; ")
+			: "—";
+	const value = profile[step as keyof UserProfile];
+	return Array.isArray(value)
+		? value.join(", ")
+		: value === undefined
+			? "—"
+			: String(value);
+}
+function wizardPrompt(step: Step, draft: Draft): string {
+	const editHint =
+		draft.mode === "edit"
+			? `\nТекущее значение: ${currentValue(step, draft.profile)}\nОтправьте =, чтобы оставить его без изменения.`
+			: "";
+	return `Шаг ${stepNumber(step)}/${steps.length}. ${ask(step)}${editHint}`;
+}
+function profileSummary(profile: Partial<UserProfile>): string {
+	const formats = profile.workFormats
+		? Object.entries(profile.workFormats)
+				.map(([name, values]) => `${name}: ${values.join(", ")}`)
+				.join("; ")
+		: "—";
+	return `ID: ${profile.id ?? "—"}\nНазвание: ${profile.title ?? "—"}\nВключён: ${profile.enabled ? "да" : "нет"}\nОсновные: ${profile.primary?.join(", ") ?? "—"}\nКонтекст: ${profile.context?.join(", ") ?? "—"}\nИсключения: ${profile.exclude?.join(", ") ?? "—"}\nГрейды: ${profile.grades?.join(", ") ?? "—"}\nФорматы: ${formats}`;
+}
 const boolean = (value: string): boolean | undefined =>
 	["да", "д", "yes", "y"].includes(value.trim().toLowerCase())
 		? true
@@ -331,6 +393,27 @@ export class BotCommandRouter {
 			return this.handle({ chatId: query.chatId, text: "/pause" });
 		if (callback.action === "resume")
 			return this.handle({ chatId: query.chatId, text: "/resume" });
+		if (
+			callback.action === "wizard-yes" ||
+			callback.action === "wizard-no" ||
+			callback.action === "wizard-skip"
+		) {
+			const state = this.storage.getBotDialog(query.chatId);
+			if (state?.command !== "profiles")
+				return void (await this.client.sendText(
+					query.chatId,
+					"Эта кнопка устарела. Откройте /profiles.",
+				));
+			const value =
+				callback.action === "wizard-yes"
+					? "да"
+					: callback.action === "wizard-no"
+						? "нет"
+						: (state.draft as Draft).mode === "edit"
+							? "="
+							: "-";
+			return this.handle({ chatId: query.chatId, text: value });
+		}
 		const profile = this.profiles
 			?.getUserProfiles()
 			?.find((item) => item.id === callback.profileId);
@@ -628,7 +711,8 @@ export class BotCommandRouter {
 			chatId,
 			draft.mode === "delete"
 				? `Удалить профиль «${draft.id}»? (да/нет)`
-				: ask(step),
+				: wizardPrompt(step, draft),
+			draft.mode === "delete" ? undefined : wizardKeyboard(step),
 		);
 	}
 	private async wizard(message: CommandMessage): Promise<void> {
@@ -645,30 +729,43 @@ export class BotCommandRouter {
 		if (step === "confirm")
 			return this.finishProfile(message.chatId, draft, message.text);
 		const profile = { ...draft.profile };
+		if (message.text.trim() === "=" && draft.mode === "edit") {
+			const next = steps[steps.indexOf(step) + 1];
+			this.storage.saveBotDialog(message.chatId, "profiles", next, draft);
+			return this.sendWizardStep(message.chatId, next, draft);
+		}
 		if (step === "id" || step === "title") {
 			if (!message.text.trim())
 				return void (await this.client.sendText(
 					message.chatId,
-					`Значение обязательно. ${ask(step)}`,
+					`Шаг ${stepNumber(step)}: значение обязательно. ${wizardPrompt(step, draft)}`,
 				));
 			profile[step] = message.text.trim();
 		} else if (step === "enabled") {
 			const value = boolean(message.text);
 			if (value === undefined)
-				return void (await this.client.sendText(message.chatId, ask(step)));
+				return void (await this.client.sendText(
+					message.chatId,
+					`Шаг ${stepNumber(step)}: выберите Да или Нет.`,
+					wizardKeyboard(step),
+				));
 			profile.enabled = value;
 		} else if (step === "primary") {
 			const value = list(message.text, true);
 			if (!value)
 				return void (await this.client.sendText(
 					message.chatId,
-					"Укажите хотя бы один термин.",
+					`Шаг ${stepNumber(step)}: укажите хотя бы один термин. Например: react, typescript.`,
 				));
 			profile.primary = value;
 		} else if (step === "workFormats") {
 			const value = workFormats(message.text);
 			if (message.text.trim() !== "-" && !value)
-				return void (await this.client.sendText(message.chatId, ask(step)));
+				return void (await this.client.sendText(
+					message.chatId,
+					`Шаг ${stepNumber(step)}: используйте формат remote: remote, удалённо или -.`,
+					wizardKeyboard(step),
+				));
 			profile.workFormats = value;
 		} else profile[step] = list(message.text);
 		const next = steps[steps.indexOf(step) + 1];
@@ -676,12 +773,18 @@ export class BotCommandRouter {
 			...draft,
 			profile,
 		});
-		await this.client.sendText(
-			message.chatId,
-			next === "confirm"
-				? `${profile.id} — ${profile.title}\nОсновные: ${profile.primary?.join(", ")}\n\n${ask(next)}`
-				: ask(next),
-		);
+		await this.sendWizardStep(message.chatId, next, { ...draft, profile });
+	}
+	private async sendWizardStep(
+		chatId: string,
+		step: Step,
+		draft: Draft,
+	): Promise<void> {
+		const text =
+			step === "confirm"
+				? `Проверьте профиль:\n${profileSummary(draft.profile ?? {})}\n\nШаг ${stepNumber(step)}/${steps.length}. Сохранить профиль?`
+				: wizardPrompt(step, draft);
+		await this.client.sendText(chatId, text, wizardKeyboard(step));
 	}
 	private async sourceWizard(
 		chatId: string,
@@ -716,7 +819,7 @@ export class BotCommandRouter {
 		if (!profileStore) return;
 		const approved = boolean(answer);
 		if (approved === undefined)
-			return void (await this.client.sendText(chatId, ask("confirm")));
+			return void (await this.sendWizardStep(chatId, "confirm", draft));
 		if (!approved) {
 			this.storage.clearBotDialog(chatId);
 			return void (await this.client.sendText(chatId, "Сохранение отменено."));
@@ -737,7 +840,7 @@ export class BotCommandRouter {
 			await this.client.sendText(
 				chatId,
 				error instanceof Error
-					? `Не удалось сохранить: ${error.message}`
+					? `Не удалось сохранить профиль: ${error.message}`
 					: "Не удалось сохранить профиль.",
 			);
 		}

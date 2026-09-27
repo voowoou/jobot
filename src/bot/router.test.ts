@@ -358,3 +358,72 @@ test("creates, cancels, rejects duplicate IDs, and deletes profiles through the 
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+test("profile wizard shows steps, controls, summary, and preserves edit values", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "jobot-wizard-"));
+	let dialog: BotDialogState | undefined;
+	const replies: Array<{ text: string; markup?: unknown }> = [];
+	const profiles = new ProfileStore(join(directory, "profiles.yaml"));
+	profiles.saveUserProfiles([
+		{
+			id: "frontend",
+			title: "Frontend",
+			enabled: true,
+			primary: ["react"],
+			context: ["vacancy"],
+		},
+	]);
+	const router = new BotCommandRouter(
+		{
+			sendText: async (_chatId, text, markup) =>
+				void replies.push({ text, markup }),
+			answerCallbackQuery: async () => undefined,
+		},
+		{
+			...sourceControls,
+			getBotDialog: () => dialog,
+			clearBotDialog: () => {
+				const exists = dialog !== undefined;
+				dialog = undefined;
+				return exists;
+			},
+			saveBotDialog: (chatId, command, step, draft) => {
+				dialog = { chatId, command, step, draft, updatedAt: "now" };
+			},
+		},
+		"1",
+		profiles,
+	);
+	try {
+		await router.handle({ chatId: "1", text: "/profiles edit frontend" });
+		assert.match(replies[0].text, /Шаг 1\/9/);
+		assert.match(replies[0].text, /Текущее значение: frontend/);
+		await router.handle({ chatId: "1", text: "=" });
+		await router.handle({ chatId: "1", text: "=" });
+		await router.handleCallback({
+			chatId: "1",
+			callbackId: "enabled",
+			data: "v1:wizard-yes",
+		});
+		await router.handle({ chatId: "1", text: "=" });
+		await router.handleCallback({
+			chatId: "1",
+			callbackId: "skip",
+			data: "v1:wizard-skip",
+		});
+		await router.handle({ chatId: "1", text: "=" });
+		await router.handle({ chatId: "1", text: "=" });
+		await router.handle({ chatId: "1", text: "=" });
+		assert.match(replies.at(-1)?.text ?? "", /Проверьте профиль/);
+		assert.match(replies.at(-1)?.text ?? "", /Контекст: vacancy/);
+		assert.match(JSON.stringify(replies.at(-1)?.markup), /wizard-yes/);
+		await router.handleCallback({
+			chatId: "1",
+			callbackId: "save",
+			data: "v1:wizard-yes",
+		});
+		assert.deepEqual(profiles.getUserProfiles()?.[0].context, ["vacancy"]);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
