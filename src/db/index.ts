@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 
 const RETENTION_DAYS = 30;
+const RECENT_SOURCES_LIMIT = 100;
 const DEFAULT_DATABASE_PATH = resolve(process.cwd(), "data", "app.db");
 
 interface ProcessedMessageRow {
@@ -39,6 +40,12 @@ interface SourceRow {
 	chat_id: string;
 	title: string | null;
 }
+export interface RecentSource {
+	chatId: string;
+	title: string;
+	type: "group" | "supergroup" | "channel";
+	lastSeenAt: number;
+}
 
 export interface DeliveryTask {
 	id: number;
@@ -65,6 +72,11 @@ export class DeduplicationStorage {
 	private readonly listSources;
 	private readonly addSource;
 	private readonly removeSource;
+	private readonly listRecentSources;
+	private readonly countRecentSources;
+	private readonly upsertRecentSource;
+	private readonly deleteExpiredRecentSources;
+	private readonly trimRecentSources;
 	private readonly findPaused;
 	private readonly writePaused;
 	private readonly enqueueOutbox;
@@ -111,6 +123,13 @@ export class DeduplicationStorage {
         chat_id TEXT PRIMARY KEY,
         title TEXT
       );
+      CREATE TABLE IF NOT EXISTS recent_source_chats (
+        chat_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('group', 'supergroup', 'channel')),
+        last_seen_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS recent_source_chats_last_seen_at ON recent_source_chats(last_seen_at DESC);
       CREATE TABLE IF NOT EXISTS delivery_outbox (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         chat_id TEXT NOT NULL,
@@ -180,6 +199,15 @@ export class DeduplicationStorage {
 		this.removeSource = this.database.prepare<[string]>(
 			`DELETE FROM source_chats WHERE chat_id = ?`,
 		);
+		this.listRecentSources = this.database.prepare<[number, number], { chat_id: string; title: string; type: RecentSource["type"]; last_seen_at: number }>(
+			`SELECT chat_id, title, type, last_seen_at FROM recent_source_chats ORDER BY last_seen_at DESC LIMIT ? OFFSET ?`,
+		);
+		this.countRecentSources = this.database.prepare<[], { count: number }>(`SELECT count(*) AS count FROM recent_source_chats`);
+		this.upsertRecentSource = this.database.prepare<[string, string, RecentSource["type"], number]>(
+			`INSERT INTO recent_source_chats (chat_id, title, type, last_seen_at) VALUES (?, ?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, type = excluded.type, last_seen_at = excluded.last_seen_at`,
+		);
+		this.deleteExpiredRecentSources = this.database.prepare<[number]>(`DELETE FROM recent_source_chats WHERE last_seen_at < ?`);
+		this.trimRecentSources = this.database.prepare<[number]>(`DELETE FROM recent_source_chats WHERE chat_id IN (SELECT chat_id FROM recent_source_chats ORDER BY last_seen_at DESC LIMIT -1 OFFSET ?)`);
 		this.findPaused = this.database.prepare<[], { paused: number }>(
 			`SELECT paused FROM source_settings WHERE id = 1`,
 		);
@@ -200,6 +228,7 @@ export class DeduplicationStorage {
 		this.insertFingerprint = this.database.prepare<[string]>(`INSERT OR IGNORE INTO message_fingerprints (fingerprint) VALUES (?)`);
 
 		this.cleanupExpired();
+		this.cleanupRecentSources();
 	}
 
 	public isProcessed(chatId: string, messageId: number): boolean {
@@ -269,6 +298,25 @@ export class DeduplicationStorage {
 	}
 	public removeSourceChat(chatId: string): boolean {
 		return this.removeSource.run(chatId).changes > 0;
+	}
+	public recordRecentSource(source: RecentSource): void {
+		this.upsertRecentSource.run(source.chatId, source.title, source.type, source.lastSeenAt);
+		this.cleanupRecentSources();
+	}
+	public listRecentSourceChats(limit: number, offset = 0): RecentSource[] {
+		return this.listRecentSources.all(limit, offset).map((source) => ({
+			chatId: source.chat_id,
+			title: source.title,
+			type: source.type,
+			lastSeenAt: source.last_seen_at,
+		}));
+	}
+	public getRecentSourceCount(): number {
+		return this.countRecentSources.get()?.count ?? 0;
+	}
+	private cleanupRecentSources(): void {
+		this.deleteExpiredRecentSources.run(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1_000);
+		this.trimRecentSources.run(RECENT_SOURCES_LIMIT);
 	}
 	public setNotificationsPaused(paused: boolean): void {
 		this.writePaused.run(paused ? 1 : 0);

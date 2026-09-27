@@ -26,6 +26,7 @@ async function getMessageContext(event: NewMessageEvent): Promise<{
 	chatId: string;
 	directLink: string;
 	sourceTitle: string;
+	sourceType: "group" | "supergroup" | "channel";
 }> {
 	const chatId = event.chatId?.toString();
 
@@ -52,6 +53,11 @@ async function getMessageContext(event: NewMessageEvent): Promise<{
 			? `https://t.me/${username}/${event.message.id}`
 			: getInternalPostLink(chatId, event.message.id),
 		sourceTitle: chat ? getDisplayName(chat) : "Неизвестный чат",
+		sourceType: event.isChannel
+			? event.isGroup
+				? "supergroup"
+				: "channel"
+			: "group",
 	};
 }
 
@@ -70,6 +76,13 @@ async function processMessage(
 	if (!chatId) {
 		throw new Error("Unable to determine the source chat ID");
 	}
+	const context = await getMessageContext(event);
+	db.recordRecentSource({
+		chatId: context.chatId,
+		title: context.sourceTitle,
+		type: context.sourceType,
+		lastSeenAt: Date.now(),
+	});
 	const sourceSettings = db.getSourceSettings();
 	if (!isAllowedSource(chatId, sourceSettings)) {
 		db.incrementCounter("filtered");
@@ -89,8 +102,6 @@ async function processMessage(
 		});
 		return;
 	}
-
-	const context = await getMessageContext(event);
 
 	if (db.isProcessed(context.chatId, event.message.id)) {
 		logEvent("debug", "message.skipped", {

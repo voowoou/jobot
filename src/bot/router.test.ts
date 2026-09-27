@@ -13,6 +13,8 @@ const sourceControls = {
 	setSourceMode: () => undefined,
 	addSourceChat: () => undefined,
 	removeSourceChat: () => false,
+	listRecentSourceChats: () => [],
+	getRecentSourceCount: () => 0,
 	setNotificationsPaused: () => undefined,
 	getOutboxCount: () => 0,
 	getCounters: () => ({}),
@@ -31,6 +33,8 @@ test("parses only versioned callback data with valid profile IDs", () => {
 	assert.equal(parseCallback("v1:profile-edit"), undefined);
 	assert.equal(parseCallback("v0:profiles"), undefined);
 	assert.equal(parseCallback("v1:profile-edit:../../secret"), undefined);
+	assert.deepEqual(parseCallback("v1:source-add:-100123"), { action: "source-add", chatId: "-100123" });
+	assert.deepEqual(parseCallback("v1:sources-recent:2"), { action: "sources-recent", page: 2 });
 });
 
 test("router denies non-owner and cancels only the owner's active dialog", async () => {
@@ -160,6 +164,64 @@ test("callback controls enforce ownership and require deletion confirmation", as
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+test("recent sources paginate and can be selected through callbacks", async () => {
+	const replies: Array<{ text: string; markup?: { inline_keyboard: Array<Array<{ callback_data: string }>> } }> = [];
+	const selected = new Set<string>();
+	const recent = Array.from({ length: 7 }, (_, index) => ({
+		chatId: `-100${index + 1}`,
+		title: `Source ${index + 1}`,
+		type: "channel" as const,
+		lastSeenAt: index,
+	}));
+	const router = new BotCommandRouter(
+		{
+			sendText: async (_chatId, text, markup) => void replies.push({ text, markup }),
+			answerCallbackQuery: async () => undefined,
+		},
+		{
+			...sourceControls,
+			getSourceSettings: () => ({ mode: "all" as const, chatIds: [...selected], paused: false }),
+			listRecentSourceChats: (limit, offset = 0) => recent.slice(offset, offset + limit),
+			getRecentSourceCount: () => recent.length,
+			addSourceChat: (chatId) => void selected.add(chatId),
+			removeSourceChat: (chatId) => selected.delete(chatId),
+			clearBotDialog: () => false,
+			getBotDialog: () => undefined,
+			saveBotDialog: () => undefined,
+		},
+		"1",
+	);
+	await router.handle({ chatId: "1", text: "/sources recent" });
+	assert.match(replies[0].text, /1\/2/);
+	assert.match(JSON.stringify(replies[0].markup), /sources-recent:1/);
+	await router.handleCallback({ chatId: "1", callbackId: "add", data: "v1:source-add:-1001" });
+	assert.equal(selected.has("-1001"), true);
+	assert.match(JSON.stringify(replies.at(-1)?.markup), /source-remove:-1001/);
+});
+
+test("switching to allowlist explains the effect before changing the mode", async () => {
+	const replies: string[] = [];
+	let mode: "all" | "allowlist" | "denylist" = "all";
+	let dialog: BotDialogState | undefined;
+	const router = new BotCommandRouter(
+		{ sendText: async (_chatId, text) => void replies.push(text) },
+		{
+			...sourceControls,
+			getSourceSettings: () => ({ mode, chatIds: [], paused: false }),
+			setSourceMode: (next) => { mode = next; },
+			clearBotDialog: () => { const exists = dialog !== undefined; dialog = undefined; return exists; },
+			getBotDialog: () => dialog,
+			saveBotDialog: (chatId, command, step, draft) => { dialog = { chatId, command, step, draft, updatedAt: "now" }; },
+		},
+		"1",
+	);
+	await router.handle({ chatId: "1", text: "/sources mode allowlist" });
+	assert.equal(mode, "all");
+	assert.match(replies[0], /остальные перестанут/i);
+	await router.handle({ chatId: "1", text: "да" });
+	assert.equal(mode, "allowlist");
 });
 
 test("creates, cancels, rejects duplicate IDs, and deletes profiles through the wizard", async () => {

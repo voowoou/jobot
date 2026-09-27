@@ -61,3 +61,20 @@ test("persists source settings and notification pause", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("keeps recent group and channel sources with a bounded, expiring list", () => {
+	const directory = mkdtempSync(join(tmpdir(), "jobot-db-"));
+	const storage = new DeduplicationStorage(join(directory, "app.db"));
+	try {
+		const now = Date.now();
+		storage.recordRecentSource({ chatId: "-1001", title: "Jobs", type: "channel", lastSeenAt: now - 1 });
+		storage.recordRecentSource({ chatId: "-1002", title: "Developers", type: "supergroup", lastSeenAt: now });
+		assert.deepEqual(storage.listRecentSourceChats(1), [{ chatId: "-1002", title: "Developers", type: "supergroup", lastSeenAt: now }]);
+		assert.equal(storage.getRecentSourceCount(), 2);
+		storage.recordRecentSource({ chatId: "-1001", title: "New Jobs", type: "channel", lastSeenAt: Date.now() });
+		assert.equal(storage.listRecentSourceChats(2)[0].title, "New Jobs");
+	} finally {
+		storage.close();
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
