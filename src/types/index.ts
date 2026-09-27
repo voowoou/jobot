@@ -16,6 +16,22 @@ export interface SearchProfile {
   };
 }
 
+/** Human-editable search profile stored in data/profiles.yaml. */
+export interface UserProfile {
+  id: string;
+  title: string;
+  enabled: boolean;
+  primary: string[];
+  context?: string[];
+  exclude?: string[];
+  grades?: string[];
+  workFormats?: Record<string, string[]>;
+}
+
+export interface ProfileConfig {
+  profiles: UserProfile[];
+}
+
 export interface ParsedVacancy {
   originalText: string;
   profileId: string;

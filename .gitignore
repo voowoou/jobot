@@ -4,7 +4,8 @@
 
 # Generated application data
 *.db
-data/
+data/*
+!data/profiles.example.yaml
 dist/
 
 # Dependencies and logs

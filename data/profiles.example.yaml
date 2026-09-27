@@ -1,0 +1,11 @@
+profiles:
+  - id: java-backend
+    title: Java Backend
+    enabled: true
+    primary: [java, "spring boot", spring, kafka]
+    context: [вакансия, ищем, hiring, job]
+    exclude: [senior, lead, architect]
+    grades: [junior, middle]
+    workFormats:
+      Удаленка: [remote, удаленка, удалёнка]
+      Гибрид: [hybrid, гибрид]

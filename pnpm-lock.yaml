@@ -20,6 +20,9 @@ importers:
       telegram:
         specifier: ^2.26.22
         version: 2.26.22
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -623,6 +626,11 @@ packages:
     engines: {node: '>=0.10.32'}
     deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
+  yaml@2.9.1:
+    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
 snapshots:
 
   '@cryptography/aes@0.1.1': {}
@@ -1185,3 +1193,5 @@ snapshots:
       slide: 1.1.6
 
   yaeti@0.0.6: {}
+
+  yaml@2.9.1: {}

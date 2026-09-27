@@ -1,6 +1,6 @@
 import type { SearchProfile } from "../types/index.js";
 
-export const SEARCH_PROFILES: SearchProfile[] = [
+export const DEFAULT_SEARCH_PROFILES: SearchProfile[] = [
   {
     id: "frontend",
     title: "Frontend (React / JS)",
@@ -48,3 +48,9 @@ export const SEARCH_PROFILES: SearchProfile[] = [
     },
   },
 ];
+
+/**
+ * Temporary compatibility export. User profiles are loaded by profile-config.ts
+ * and will be connected to the matcher during roadmap stage 4.
+ */
+export const SEARCH_PROFILES = DEFAULT_SEARCH_PROFILES;
