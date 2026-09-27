@@ -81,16 +81,19 @@ pnpm profiles:validate
 
 Если `data/profiles.yaml` отсутствует или пуст, используется встроенный Frontend-профиль. Пример структуры доступен в [data/profiles.example.yaml](data/profiles.example.yaml).
 
-## Запуск и проверка
-
-```bash
-pnpm start
-```
-
-Для разработки:
+## Локальная разработка и проверка
 
 ```bash
 pnpm dev
+```
+
+`pnpm dev` запускает TypeScript через `tsx` и перезапускается при изменениях. Для однократного локального запуска используйте `pnpm start`.
+
+Проверить код без Telegram-ключей:
+
+```bash
+pnpm typecheck
+pnpm test
 ```
 
 После JSON-лога `application.started` отправьте **с другого аккаунта** новое сообщение в группу или канал, например:
@@ -101,24 +104,29 @@ pnpm dev
 
 Подходящая вакансия отправляется в личный чат с ботом и только затем отмечается обработанной в `data/app.db`. Одинаковая пара чат/сообщение не отправляется повторно 30 дней. История до запуска не обрабатывается.
 
-Проверить код без Telegram-ключей:
+Production-сборка создаёт JavaScript в `dist/`:
 
 ```bash
-pnpm typecheck
-pnpm test
+pnpm build
+pnpm start:prod
 ```
+
+`pnpm start:prod` предназначен для VPS и не требует `tsx` в runtime. Не запускайте одновременно `pnpm start`, `pnpm dev` или `pnpm start:prod`: Bot API допускает только один long polling consumer.
 
 ## PM2 / VPS
 
 ```bash
 pnpm add -g pm2
+pnpm install --frozen-lockfile
+pnpm build
+pnpm prune --prod
 pm2 start ecosystem.config.cjs
 pm2 logs telegram-vacancy-bot
 pm2 save
 pm2 startup
 ```
 
-Выполните команду, которую напечатает `pm2 startup`, от пользователя, запускающего процесс. PM2 отправляет `SIGTERM`; Jobot прекращает приём новых сообщений, отключает Telegram-клиент и закрывает SQLite.
+PM2 запускает собранный `dist/index.js` обычным Node.js в одном экземпляре; cluster mode использовать нельзя, потому что Bot API допускает только один long polling consumer. Выполните команду, которую напечатает `pm2 startup`, от пользователя, запускающего процесс. PM2 отправляет `SIGTERM`; Jobot прекращает приём новых сообщений, отключает Telegram-клиент и закрывает SQLite.
 
 ### Обновление без потери данных
 
@@ -129,8 +137,12 @@ git pull
 pnpm install --frozen-lockfile
 pnpm typecheck
 pnpm test
+pnpm build
+pnpm prune --prod
 pm2 reload telegram-vacancy-bot
 ```
+
+После `pnpm prune --prod` для диагностики и разработки снова выполните обычный `pnpm install`, чтобы вернуть dev dependencies.
 
 ### Backup, restore и миграция
 
