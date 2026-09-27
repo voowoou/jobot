@@ -128,6 +128,32 @@ pm2 startup
 
 PM2 запускает собранный `dist/index.js` обычным Node.js в одном экземпляре; cluster mode использовать нельзя, потому что Bot API допускает только один long polling consumer. Выполните команду, которую напечатает `pm2 startup`, от пользователя, запускающего процесс. PM2 отправляет `SIGTERM`; Jobot прекращает приём новых сообщений, отключает Telegram-клиент и закрывает SQLite.
 
+### Память и логи на VPS
+
+В `ecosystem.config.cjs` явно задан один процесс в fork mode. Node получает лимит old space 128 MiB, а PM2 перезапускает процесс при RSS 192 MiB. Это не замена поиску утечек: PM2 фиксирует memory restart в собственных логах. Меняйте лимит только после замера RSS через `pm2 monit`; после изменения `ecosystem.config.cjs` примените его командой `pm2 reload telegram-vacancy-bot`.
+
+Ограничьте рост PM2-логов модулем ротации:
+
+```bash
+pm2 install pm2-logrotate
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 7
+pm2 set pm2-logrotate:compress true
+pm2 set pm2-logrotate:rotateModule true
+pm2 conf
+```
+
+Такая настройка хранит текущий лог и не более семи сжатых архивов для каждого лога. Регулярно проверяйте процесс, логи и данные:
+
+```bash
+pm2 status
+pm2 monit
+pm2 logs telegram-vacancy-bot --lines 100
+du -sh data ~/.pm2/logs
+```
+
+Не включайте `LOG_LEVEL=debug` надолго на VPS: логи не содержат токены, StringSession и текст вакансий, но высокий уровень всё равно создаёт лишний объём. Для изменения memory limit сначала посмотрите RSS в `pm2 monit`, затем поменяйте `node_args` и `max_memory_restart` вместе, сохраняя небольшой запас у restart-порога.
+
 ### Обновление без потери данных
 
 На сервере не удаляйте `.env` и каталог `data/`: в нём находятся SQLite и пользовательские профили.
