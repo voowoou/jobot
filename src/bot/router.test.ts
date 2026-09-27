@@ -148,6 +148,29 @@ test("empty sources explains that all mode does not need a list", async () => {
 	assert.match(replies[0], /режиме all список не требуется/i);
 });
 
+test("empty profiles gives the exact command for creating a profile", async () => {
+	const replies: string[] = [];
+	const directory = mkdtempSync(join(tmpdir(), "jobot-empty-profiles-"));
+	const profiles = new ProfileStore(join(directory, "profiles.yaml"));
+	const router = new BotCommandRouter(
+		{ sendText: async (_chatId, text) => void replies.push(text) },
+		{
+			...sourceControls,
+			clearBotDialog: () => false,
+			getBotDialog: () => undefined,
+			saveBotDialog: () => undefined,
+		},
+		"1",
+		profiles,
+	);
+	try {
+		await router.handle({ chatId: "1", text: "/profiles" });
+		assert.match(replies[0], /\/profiles add/);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
 test("callback controls enforce ownership and require deletion confirmation", async () => {
 	const directory = mkdtempSync(join(tmpdir(), "jobot-callback-"));
 	const replies: Array<{ text: string; markup?: unknown }> = [];

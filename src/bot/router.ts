@@ -701,7 +701,7 @@ export class BotCommandRouter {
 								`${profile.id} — ${profile.title} (${profile.enabled ? "включён" : "выключен"})`,
 						)
 						.join("\n")
-				: "Пользовательских профилей нет: используется встроенный Frontend-профиль.",
+				: "Пользовательских профилей нет: используется встроенный Frontend-профиль. Чтобы создать свой профиль, используйте /profiles add.",
 			keyboard,
 		);
 	}
