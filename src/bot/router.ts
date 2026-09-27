@@ -1,5 +1,5 @@
 import type { ProfileStore } from "../config/profile-store.js";
-import type { BotDialogState, DeduplicationStorage, RecentSource } from "../db/index.js";
+import type { BotDialogState, DeduplicationStorage } from "../db/index.js";
 import { formatNotification } from "../services/formatter.js";
 import type { UserProfile } from "../types/index.js";
 import type { InlineKeyboard } from "./client.js";
@@ -9,7 +9,11 @@ export interface CommandMessage {
 	text: string;
 }
 export interface CommandReplyClient {
-	sendText(chatId: string, text: string, replyMarkup?: InlineKeyboard): Promise<void>;
+	sendText(
+		chatId: string,
+		text: string,
+		replyMarkup?: InlineKeyboard,
+	): Promise<void>;
 	sendNotification?(text: string): Promise<void>;
 	answerCallbackQuery?(callbackQueryId: string, text?: string): Promise<void>;
 }
@@ -83,28 +87,70 @@ const HELP =
 	"/help — эта справка\n" +
 	"/cancel — отменить текущую операцию";
 
-type CallbackAction = "home" | "profiles" | "sources" | "sources-recent" | "source-add" | "source-remove" | "status" | "test" | "pause" | "resume" | "profile-add" | "profile-edit" | "profile-toggle" | "profile-delete" | "profile-delete-confirm" | "profile-delete-cancel";
-type Callback = { action: CallbackAction; profileId?: string; chatId?: string; page?: number };
+type CallbackAction =
+	| "home"
+	| "profiles"
+	| "sources"
+	| "sources-recent"
+	| "source-add"
+	| "source-remove"
+	| "status"
+	| "test"
+	| "pause"
+	| "resume"
+	| "profile-add"
+	| "profile-edit"
+	| "profile-toggle"
+	| "profile-delete"
+	| "profile-delete-confirm"
+	| "profile-delete-cancel";
+type Callback = {
+	action: CallbackAction;
+	profileId?: string;
+	chatId?: string;
+	page?: number;
+};
 const callbackData = (action: string, profileId?: string) =>
 	`v1:${action}${profileId ? `:${profileId}` : ""}`;
 export function parseCallback(data: string | undefined): Callback | undefined {
 	if (!data) return undefined;
 	const sourceMatch = data.match(/^v1:(sources-recent)(?::(\d{1,3}))?$/);
-	if (sourceMatch) return { action: "sources-recent", page: Number(sourceMatch[2] ?? 0) };
-	const sourceAction = data.match(/^v1:(source-add|source-remove):(-\d{1,20})$/);
-	if (sourceAction) return { action: sourceAction[1] as CallbackAction, chatId: sourceAction[2] };
-	const match = data.match(/^v1:(home|profiles|sources|status|test|pause|resume|profile-add|profile-edit|profile-toggle|profile-delete|profile-delete-confirm|profile-delete-cancel)(?::([a-z0-9][a-z0-9_-]{0,63}))?$/i);
+	if (sourceMatch)
+		return { action: "sources-recent", page: Number(sourceMatch[2] ?? 0) };
+	const sourceAction = data.match(
+		/^v1:(source-add|source-remove):(-\d{1,20})$/,
+	);
+	if (sourceAction)
+		return {
+			action: sourceAction[1] as CallbackAction,
+			chatId: sourceAction[2],
+		};
+	const match = data.match(
+		/^v1:(home|profiles|sources|status|test|pause|resume|profile-add|profile-edit|profile-toggle|profile-delete|profile-delete-confirm|profile-delete-cancel)(?::([a-z0-9][a-z0-9_-]{0,63}))?$/i,
+	);
 	if (!match) return undefined;
 	const action = match[1] as CallbackAction;
-	const needsProfile = action.startsWith("profile-") && action !== "profile-add";
+	const needsProfile =
+		action.startsWith("profile-") && action !== "profile-add";
 	if (needsProfile !== Boolean(match[2])) return undefined;
 	return { action, profileId: match[2] };
 }
 const mainKeyboard = (paused: boolean): InlineKeyboard => ({
 	inline_keyboard: [
-		[{ text: "Профили", callback_data: callbackData("profiles") }, { text: "Источники", callback_data: callbackData("sources") }],
-		[{ text: "Статус", callback_data: callbackData("status") }, { text: "Тест", callback_data: callbackData("test") }],
-		[{ text: paused ? "Возобновить" : "Пауза", callback_data: callbackData(paused ? "resume" : "pause") }],
+		[
+			{ text: "Профили", callback_data: callbackData("profiles") },
+			{ text: "Источники", callback_data: callbackData("sources") },
+		],
+		[
+			{ text: "Статус", callback_data: callbackData("status") },
+			{ text: "Тест", callback_data: callbackData("test") },
+		],
+		[
+			{
+				text: paused ? "Возобновить" : "Пауза",
+				callback_data: callbackData(paused ? "resume" : "pause"),
+			},
+		],
 	],
 });
 
@@ -186,7 +232,11 @@ export class BotCommandRouter {
 				mainKeyboard(this.storage.getSourceSettings().paused),
 			));
 		if (command === "help")
-			return void (await this.client.sendText(message.chatId, HELP, mainKeyboard(this.storage.getSourceSettings().paused)));
+			return void (await this.client.sendText(
+				message.chatId,
+				HELP,
+				mainKeyboard(this.storage.getSourceSettings().paused),
+			));
 		if (command === "cancel")
 			return void (await this.client.sendText(
 				message.chatId,
@@ -238,7 +288,8 @@ export class BotCommandRouter {
 	}
 	public async handleCallback(query: CallbackQuery): Promise<void> {
 		const callback = parseCallback(query.data);
-		const answer = async (text?: string) => this.client.answerCallbackQuery?.(query.callbackId, text);
+		const answer = async (text?: string) =>
+			this.client.answerCallbackQuery?.(query.callbackId, text);
 		if (!isOwner(query.chatId, this.ownerChatId)) {
 			await answer("Нет доступа.");
 			return;
@@ -248,31 +299,95 @@ export class BotCommandRouter {
 			return;
 		}
 		await answer();
-		if (callback.action === "home") return this.handle({ chatId: query.chatId, text: "/start" });
+		if (callback.action === "home")
+			return this.handle({ chatId: query.chatId, text: "/start" });
 		if (callback.action === "profiles") return this.sendProfiles(query.chatId);
 		if (callback.action === "sources") return this.sendSources(query.chatId);
-		if (callback.action === "sources-recent") return this.sendRecentSources(query.chatId, callback.page ?? 0);
-		if ((callback.action === "source-add" || callback.action === "source-remove") && callback.chatId) {
-			const source = this.storage.listRecentSourceChats(100).find((item) => item.chatId === callback.chatId);
-			if (!source) return void (await this.client.sendText(query.chatId, "Эта кнопка устарела: источник больше недоступен. Откройте /sources recent."));
-			if (callback.action === "source-add") this.storage.addSourceChat(source.chatId, source.title);
+		if (callback.action === "sources-recent")
+			return this.sendRecentSources(query.chatId, callback.page ?? 0);
+		if (
+			(callback.action === "source-add" ||
+				callback.action === "source-remove") &&
+			callback.chatId
+		) {
+			const source = this.storage
+				.listRecentSourceChats(100)
+				.find((item) => item.chatId === callback.chatId);
+			if (!source)
+				return void (await this.client.sendText(
+					query.chatId,
+					"Эта кнопка устарела: источник больше недоступен. Откройте /sources recent.",
+				));
+			if (callback.action === "source-add")
+				this.storage.addSourceChat(source.chatId, source.title);
 			else this.storage.removeSourceChat(source.chatId);
 			return this.sendRecentSources(query.chatId, 0);
 		}
-		if (callback.action === "status") return this.handle({ chatId: query.chatId, text: "/status" });
-		if (callback.action === "test") return this.handle({ chatId: query.chatId, text: "/test" });
-		if (callback.action === "pause") return this.handle({ chatId: query.chatId, text: "/pause" });
-		if (callback.action === "resume") return this.handle({ chatId: query.chatId, text: "/resume" });
-		const profile = this.profiles?.getUserProfiles()?.find((item) => item.id === callback.profileId);
-		if (callback.action === "profile-add") return this.begin(query.chatId, { mode: "create", profile: {} }, "id");
-		if (!profile || !callback.profileId) return void (await this.client.sendText(query.chatId, "Эта кнопка устарела: профиль больше не существует. Откройте /profiles."));
-		if (callback.action === "profile-edit") return this.begin(query.chatId, { mode: "edit", originalId: profile.id, profile }, "id");
-		if (callback.action === "profile-toggle") return this.handle({ chatId: query.chatId, text: `/profiles toggle ${profile.id}` });
-		if (callback.action === "profile-delete") return void (await this.client.sendText(query.chatId, `Удалить профиль «${profile.id}»?`, { inline_keyboard: [[{ text: "Удалить", callback_data: callbackData("profile-delete-confirm", profile.id) }, { text: "Отмена", callback_data: callbackData("profile-delete-cancel", profile.id) }]] }));
-		if (callback.action === "profile-delete-cancel") return void (await this.client.sendText(query.chatId, "Удаление отменено."));
+		if (callback.action === "status")
+			return this.handle({ chatId: query.chatId, text: "/status" });
+		if (callback.action === "test")
+			return this.handle({ chatId: query.chatId, text: "/test" });
+		if (callback.action === "pause")
+			return this.handle({ chatId: query.chatId, text: "/pause" });
+		if (callback.action === "resume")
+			return this.handle({ chatId: query.chatId, text: "/resume" });
+		const profile = this.profiles
+			?.getUserProfiles()
+			?.find((item) => item.id === callback.profileId);
+		if (callback.action === "profile-add")
+			return this.begin(query.chatId, { mode: "create", profile: {} }, "id");
+		if (!profile || !callback.profileId)
+			return void (await this.client.sendText(
+				query.chatId,
+				"Эта кнопка устарела: профиль больше не существует. Откройте /profiles.",
+			));
+		if (callback.action === "profile-edit")
+			return this.begin(
+				query.chatId,
+				{ mode: "edit", originalId: profile.id, profile },
+				"id",
+			);
+		if (callback.action === "profile-toggle")
+			return this.handle({
+				chatId: query.chatId,
+				text: `/profiles toggle ${profile.id}`,
+			});
+		if (callback.action === "profile-delete")
+			return void (await this.client.sendText(
+				query.chatId,
+				`Удалить профиль «${profile.id}»?`,
+				{
+					inline_keyboard: [
+						[
+							{
+								text: "Удалить",
+								callback_data: callbackData(
+									"profile-delete-confirm",
+									profile.id,
+								),
+							},
+							{
+								text: "Отмена",
+								callback_data: callbackData(
+									"profile-delete-cancel",
+									profile.id,
+								),
+							},
+						],
+					],
+				},
+			));
+		if (callback.action === "profile-delete-cancel")
+			return void (await this.client.sendText(
+				query.chatId,
+				"Удаление отменено.",
+			));
 		if (callback.action === "profile-delete-confirm") {
 			this.deleteProfile(profile.id);
-			return void (await this.client.sendText(query.chatId, `Профиль «${profile.id}» удалён.`));
+			return void (await this.client.sendText(
+				query.chatId,
+				`Профиль «${profile.id}» удалён.`,
+			));
 		}
 	}
 	private async sourcesCommand(message: CommandMessage): Promise<void> {
@@ -283,14 +398,20 @@ export class BotCommandRouter {
 				this.sourcesText(),
 				this.sourcesKeyboard(),
 			));
-		if (action === "recent") return this.sendRecentSources(message.chatId, Number(chatId ?? "0"));
+		if (action === "recent")
+			return this.sendRecentSources(message.chatId, Number(chatId ?? "0"));
 		if (
 			action === "mode" &&
 			(chatId === "all" || chatId === "allowlist" || chatId === "denylist")
 		) {
 			if (chatId === "allowlist") {
-				this.storage.saveBotDialog(message.chatId, "sources", "confirm-mode", { mode: chatId });
-				return void (await this.client.sendText(message.chatId, "В режиме allowlist будут обрабатываться только выбранные источники; все остальные перестанут обрабатываться. Переключить режим? (да/нет)"));
+				this.storage.saveBotDialog(message.chatId, "sources", "confirm-mode", {
+					mode: chatId,
+				});
+				return void (await this.client.sendText(
+					message.chatId,
+					"В режиме allowlist будут обрабатываться только выбранные источники; все остальные перестанут обрабатываться. Переключить режим? (да/нет)",
+				));
 			}
 			this.storage.setSourceMode(chatId);
 			return void (await this.client.sendText(
@@ -326,36 +447,82 @@ export class BotCommandRouter {
 		);
 	}
 	private sourcesKeyboard(): InlineKeyboard {
-		return { inline_keyboard: [[{ text: "Недавние источники", callback_data: callbackData("sources-recent") }]] };
+		return {
+			inline_keyboard: [
+				[
+					{
+						text: "Недавние источники",
+						callback_data: callbackData("sources-recent"),
+					},
+				],
+			],
+		};
 	}
 	private async sendSources(chatId: string): Promise<void> {
-		await this.client.sendText(chatId, this.sourcesText(), this.sourcesKeyboard());
+		await this.client.sendText(
+			chatId,
+			this.sourcesText(),
+			this.sourcesKeyboard(),
+		);
 	}
-	private async sendRecentSources(chatId: string, requestedPage: number): Promise<void> {
+	private async sendRecentSources(
+		chatId: string,
+		requestedPage: number,
+	): Promise<void> {
 		const pageSize = 6;
 		const total = this.storage.getRecentSourceCount();
 		const pages = Math.max(1, Math.ceil(total / pageSize));
-		const page = Math.min(Math.max(0, Number.isInteger(requestedPage) ? requestedPage : 0), pages - 1);
-		const sources = this.storage.listRecentSourceChats(pageSize, page * pageSize);
-		if (!sources.length) return void (await this.client.sendText(chatId, "Недавних групп и каналов пока нет. Когда Jobot увидит новое сообщение из источника, он появится здесь."));
+		const page = Math.min(
+			Math.max(0, Number.isInteger(requestedPage) ? requestedPage : 0),
+			pages - 1,
+		);
+		const sources = this.storage.listRecentSourceChats(
+			pageSize,
+			page * pageSize,
+		);
+		if (!sources.length)
+			return void (await this.client.sendText(
+				chatId,
+				"Недавних групп и каналов пока нет. Когда Jobot увидит новое сообщение из источника, он появится здесь.",
+			));
 		const selected = new Set(this.storage.getSourceSettings().chatIds);
 		const keyboard: InlineKeyboard = { inline_keyboard: [] };
-		for (const source of sources) keyboard.inline_keyboard.push([{
-			text: `${selected.has(source.chatId) ? "Убрать" : "Добавить"}: ${source.title}`,
-			callback_data: callbackData(selected.has(source.chatId) ? "source-remove" : "source-add", source.chatId),
-		}]);
+		for (const source of sources)
+			keyboard.inline_keyboard.push([
+				{
+					text: `${selected.has(source.chatId) ? "Убрать" : "Добавить"}: ${source.title}`,
+					callback_data: callbackData(
+						selected.has(source.chatId) ? "source-remove" : "source-add",
+						source.chatId,
+					),
+				},
+			]);
 		const navigation = [];
-		if (page > 0) navigation.push({ text: "←", callback_data: callbackData("sources-recent", String(page - 1)) });
-		if (page < pages - 1) navigation.push({ text: "→", callback_data: callbackData("sources-recent", String(page + 1)) });
+		if (page > 0)
+			navigation.push({
+				text: "←",
+				callback_data: callbackData("sources-recent", String(page - 1)),
+			});
+		if (page < pages - 1)
+			navigation.push({
+				text: "→",
+				callback_data: callbackData("sources-recent", String(page + 1)),
+			});
 		if (navigation.length) keyboard.inline_keyboard.push(navigation);
-		await this.client.sendText(chatId, `Недавние источники (${page + 1}/${pages})\n${sources.map((source) => `${source.title} — ${source.type}`).join("\n")}`, keyboard);
+		await this.client.sendText(
+			chatId,
+			`Недавние источники (${page + 1}/${pages})\n${sources.map((source) => `${source.title} — ${source.type}`).join("\n")}`,
+			keyboard,
+		);
 	}
 	private sourcesText(): string {
 		const settings = this.storage.getSourceSettings();
 		const chats = this.storage.listSourceChats();
 		const list = chats.length
 			? chats
-					.map((chat) => `${chat.chat_id}${chat.title ? ` — ${chat.title}` : ""}`)
+					.map(
+						(chat) => `${chat.chat_id}${chat.title ? ` — ${chat.title}` : ""}`,
+					)
 					.join("\n")
 			: "—";
 		return `Режим: ${settings.mode}\nВыбранные источники:\n${list}${settings.mode === "all" ? "\n\nВ режиме all список не требуется: обрабатываются все группы и каналы." : ""}`;
@@ -377,8 +544,7 @@ export class BotCommandRouter {
 		const [, action, id] = message.text.trim().split(/\s+/);
 		const existing = profileStore.getUserProfiles();
 		const existingProfiles = existing ?? [];
-		if (!action)
-			return this.sendProfiles(message.chatId);
+		if (!action) return this.sendProfiles(message.chatId);
 		if (action === "add")
 			return this.begin(message.chatId, { mode: "create", profile: {} }, "id");
 		if (!id)
@@ -418,13 +584,43 @@ export class BotCommandRouter {
 	}
 	private async sendProfiles(chatId: string): Promise<void> {
 		const profiles = this.profiles?.getUserProfiles() ?? [];
-		const keyboard: InlineKeyboard = { inline_keyboard: [[{ text: "Создать профиль", callback_data: callbackData("profile-add") }]] };
-		for (const profile of profiles) keyboard.inline_keyboard.push([
-			{ text: `Изменить: ${profile.title}`, callback_data: callbackData("profile-edit", profile.id) },
-			{ text: profile.enabled ? "Выключить" : "Включить", callback_data: callbackData("profile-toggle", profile.id) },
-			{ text: "Удалить", callback_data: callbackData("profile-delete", profile.id) },
-		]);
-		await this.client.sendText(chatId, profiles.length ? profiles.map((profile) => `${profile.id} — ${profile.title} (${profile.enabled ? "включён" : "выключен"})`).join("\n") : "Пользовательских профилей нет: используется встроенный Frontend-профиль.", keyboard);
+		const keyboard: InlineKeyboard = {
+			inline_keyboard: [
+				[
+					{
+						text: "Создать профиль",
+						callback_data: callbackData("profile-add"),
+					},
+				],
+			],
+		};
+		for (const profile of profiles)
+			keyboard.inline_keyboard.push([
+				{
+					text: `Изменить: ${profile.title}`,
+					callback_data: callbackData("profile-edit", profile.id),
+				},
+				{
+					text: profile.enabled ? "Выключить" : "Включить",
+					callback_data: callbackData("profile-toggle", profile.id),
+				},
+				{
+					text: "Удалить",
+					callback_data: callbackData("profile-delete", profile.id),
+				},
+			]);
+		await this.client.sendText(
+			chatId,
+			profiles.length
+				? profiles
+						.map(
+							(profile) =>
+								`${profile.id} — ${profile.title} (${profile.enabled ? "включён" : "выключен"})`,
+						)
+						.join("\n")
+				: "Пользовательских профилей нет: используется встроенный Frontend-профиль.",
+			keyboard,
+		);
 	}
 	private async begin(chatId: string, draft: Draft, step: Step): Promise<void> {
 		this.storage.saveBotDialog(chatId, "profiles", step, draft);
@@ -438,7 +634,8 @@ export class BotCommandRouter {
 	private async wizard(message: CommandMessage): Promise<void> {
 		const profileStore = this.profiles;
 		const state = this.storage.getBotDialog(message.chatId);
-		if (state?.command === "sources") return this.sourceWizard(message.chatId, state.draft, message.text);
+		if (state?.command === "sources")
+			return this.sourceWizard(message.chatId, state.draft, message.text);
 		if (!profileStore) return;
 		if (state?.command !== "profiles") return;
 		const draft = state.draft as Draft;
@@ -486,15 +683,29 @@ export class BotCommandRouter {
 				: ask(next),
 		);
 	}
-	private async sourceWizard(chatId: string, draft: unknown, answer: string): Promise<void> {
+	private async sourceWizard(
+		chatId: string,
+		draft: unknown,
+		answer: string,
+	): Promise<void> {
 		const mode = (draft as { mode?: string }).mode;
 		const approved = boolean(answer);
 		if (mode !== "allowlist" || approved === undefined)
-			return void (await this.client.sendText(chatId, "Подтвердите переключение на allowlist: да или нет."));
+			return void (await this.client.sendText(
+				chatId,
+				"Подтвердите переключение на allowlist: да или нет.",
+			));
 		this.storage.clearBotDialog(chatId);
-		if (!approved) return void (await this.client.sendText(chatId, "Режим источников не изменён."));
+		if (!approved)
+			return void (await this.client.sendText(
+				chatId,
+				"Режим источников не изменён.",
+			));
 		this.storage.setSourceMode("allowlist");
-		await this.client.sendText(chatId, "Режим источников: allowlist. Обрабатываются только выбранные источники.");
+		await this.client.sendText(
+			chatId,
+			"Режим источников: allowlist. Обрабатываются только выбранные источники.",
+		);
 	}
 	private async finishProfile(
 		chatId: string,
@@ -554,7 +765,9 @@ export class BotCommandRouter {
 		const profileStore = this.profiles;
 		if (!profileStore) return;
 		profileStore.saveUserProfiles(
-			(profileStore.getUserProfiles() ?? []).filter((profile) => profile.id !== id),
+			(profileStore.getUserProfiles() ?? []).filter(
+				(profile) => profile.id !== id,
+			),
 		);
 	}
 	public getDialog(chatId: string): BotDialogState | undefined {

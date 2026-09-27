@@ -199,33 +199,90 @@ export class DeduplicationStorage {
 		this.removeSource = this.database.prepare<[string]>(
 			`DELETE FROM source_chats WHERE chat_id = ?`,
 		);
-		this.listRecentSources = this.database.prepare<[number, number], { chat_id: string; title: string; type: RecentSource["type"]; last_seen_at: number }>(
+		this.listRecentSources = this.database.prepare<
+			[number, number],
+			{
+				chat_id: string;
+				title: string;
+				type: RecentSource["type"];
+				last_seen_at: number;
+			}
+		>(
 			`SELECT chat_id, title, type, last_seen_at FROM recent_source_chats ORDER BY last_seen_at DESC LIMIT ? OFFSET ?`,
 		);
-		this.countRecentSources = this.database.prepare<[], { count: number }>(`SELECT count(*) AS count FROM recent_source_chats`);
-		this.upsertRecentSource = this.database.prepare<[string, string, RecentSource["type"], number]>(
+		this.countRecentSources = this.database.prepare<[], { count: number }>(
+			`SELECT count(*) AS count FROM recent_source_chats`,
+		);
+		this.upsertRecentSource = this.database.prepare<
+			[string, string, RecentSource["type"], number]
+		>(
 			`INSERT INTO recent_source_chats (chat_id, title, type, last_seen_at) VALUES (?, ?, ?, ?) ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, type = excluded.type, last_seen_at = excluded.last_seen_at`,
 		);
-		this.deleteExpiredRecentSources = this.database.prepare<[number]>(`DELETE FROM recent_source_chats WHERE last_seen_at < ?`);
-		this.trimRecentSources = this.database.prepare<[number]>(`DELETE FROM recent_source_chats WHERE chat_id IN (SELECT chat_id FROM recent_source_chats ORDER BY last_seen_at DESC LIMIT -1 OFFSET ?)`);
+		this.deleteExpiredRecentSources = this.database.prepare<[number]>(
+			`DELETE FROM recent_source_chats WHERE last_seen_at < ?`,
+		);
+		this.trimRecentSources = this.database.prepare<[number]>(
+			`DELETE FROM recent_source_chats WHERE chat_id IN (SELECT chat_id FROM recent_source_chats ORDER BY last_seen_at DESC LIMIT -1 OFFSET ?)`,
+		);
 		this.findPaused = this.database.prepare<[], { paused: number }>(
 			`SELECT paused FROM source_settings WHERE id = 1`,
 		);
 		this.writePaused = this.database.prepare<[number]>(
 			`INSERT INTO source_settings (id, paused) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET paused = excluded.paused`,
 		);
-		this.enqueueOutbox = this.database.prepare<[string, number, string, string, number]>(`INSERT OR IGNORE INTO delivery_outbox (chat_id, message_id, profile_id, notification, next_attempt_at) VALUES (?, ?, ?, ?, ?)`);
-		this.findDueOutbox = this.database.prepare<[number], { id: number; chat_id: string; message_id: number; profile_id: string; notification: string; attempts: number }>(`SELECT id, chat_id, message_id, profile_id, notification, attempts FROM delivery_outbox WHERE next_attempt_at <= ? ORDER BY id LIMIT 20`);
-		this.deleteOutbox = this.database.prepare<[number]>(`DELETE FROM delivery_outbox WHERE id = ?`);
-		this.rescheduleOutbox = this.database.prepare<[number, number]>(`UPDATE delivery_outbox SET attempts = attempts + 1, next_attempt_at = ? WHERE id = ?`);
-		this.countOutbox = this.database.prepare<[], { count: number }>(`SELECT count(*) AS count FROM delivery_outbox`);
-		this.markDeliveredTransaction = this.database.transaction((taskId: number, chatId: string, messageId: number) => { this.insertProcessed.run(chatId, messageId); this.deleteOutbox.run(taskId); });
-		this.incrementCounterStatement = this.database.prepare<[string]>(`INSERT INTO app_counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1`);
-		this.readCounters = this.database.prepare<[], { name: string; value: number }>(`SELECT name, value FROM app_counters`);
-		this.getFingerprintFlag = this.database.prepare<[], { enabled: number }>(`SELECT cross_channel_dedup AS enabled FROM delivery_settings WHERE id = 1`);
-		this.setFingerprintFlagStatement = this.database.prepare<[number]>(`INSERT INTO delivery_settings (id, cross_channel_dedup) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET cross_channel_dedup = excluded.cross_channel_dedup`);
-		this.findFingerprint = this.database.prepare<[string], { fingerprint: string }>(`SELECT fingerprint FROM message_fingerprints WHERE fingerprint = ?`);
-		this.insertFingerprint = this.database.prepare<[string]>(`INSERT OR IGNORE INTO message_fingerprints (fingerprint) VALUES (?)`);
+		this.enqueueOutbox = this.database.prepare<
+			[string, number, string, string, number]
+		>(
+			`INSERT OR IGNORE INTO delivery_outbox (chat_id, message_id, profile_id, notification, next_attempt_at) VALUES (?, ?, ?, ?, ?)`,
+		);
+		this.findDueOutbox = this.database.prepare<
+			[number],
+			{
+				id: number;
+				chat_id: string;
+				message_id: number;
+				profile_id: string;
+				notification: string;
+				attempts: number;
+			}
+		>(
+			`SELECT id, chat_id, message_id, profile_id, notification, attempts FROM delivery_outbox WHERE next_attempt_at <= ? ORDER BY id LIMIT 20`,
+		);
+		this.deleteOutbox = this.database.prepare<[number]>(
+			`DELETE FROM delivery_outbox WHERE id = ?`,
+		);
+		this.rescheduleOutbox = this.database.prepare<[number, number]>(
+			`UPDATE delivery_outbox SET attempts = attempts + 1, next_attempt_at = ? WHERE id = ?`,
+		);
+		this.countOutbox = this.database.prepare<[], { count: number }>(
+			`SELECT count(*) AS count FROM delivery_outbox`,
+		);
+		this.markDeliveredTransaction = this.database.transaction(
+			(taskId: number, chatId: string, messageId: number) => {
+				this.insertProcessed.run(chatId, messageId);
+				this.deleteOutbox.run(taskId);
+			},
+		);
+		this.incrementCounterStatement = this.database.prepare<[string]>(
+			`INSERT INTO app_counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1`,
+		);
+		this.readCounters = this.database.prepare<
+			[],
+			{ name: string; value: number }
+		>(`SELECT name, value FROM app_counters`);
+		this.getFingerprintFlag = this.database.prepare<[], { enabled: number }>(
+			`SELECT cross_channel_dedup AS enabled FROM delivery_settings WHERE id = 1`,
+		);
+		this.setFingerprintFlagStatement = this.database.prepare<[number]>(
+			`INSERT INTO delivery_settings (id, cross_channel_dedup) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET cross_channel_dedup = excluded.cross_channel_dedup`,
+		);
+		this.findFingerprint = this.database.prepare<
+			[string],
+			{ fingerprint: string }
+		>(`SELECT fingerprint FROM message_fingerprints WHERE fingerprint = ?`);
+		this.insertFingerprint = this.database.prepare<[string]>(
+			`INSERT OR IGNORE INTO message_fingerprints (fingerprint) VALUES (?)`,
+		);
 
 		this.cleanupExpired();
 		this.cleanupRecentSources();
@@ -300,7 +357,12 @@ export class DeduplicationStorage {
 		return this.removeSource.run(chatId).changes > 0;
 	}
 	public recordRecentSource(source: RecentSource): void {
-		this.upsertRecentSource.run(source.chatId, source.title, source.type, source.lastSeenAt);
+		this.upsertRecentSource.run(
+			source.chatId,
+			source.title,
+			source.type,
+			source.lastSeenAt,
+		);
 		this.cleanupRecentSources();
 	}
 	public listRecentSourceChats(limit: number, offset = 0): RecentSource[] {
@@ -315,28 +377,69 @@ export class DeduplicationStorage {
 		return this.countRecentSources.get()?.count ?? 0;
 	}
 	private cleanupRecentSources(): void {
-		this.deleteExpiredRecentSources.run(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1_000);
+		this.deleteExpiredRecentSources.run(
+			Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1_000,
+		);
 		this.trimRecentSources.run(RECENT_SOURCES_LIMIT);
 	}
 	public setNotificationsPaused(paused: boolean): void {
 		this.writePaused.run(paused ? 1 : 0);
 	}
 
-	public enqueueDelivery(chatId: string, messageId: number, profileId: string, notification: string): void {
-		this.enqueueOutbox.run(chatId, messageId, profileId, notification, Date.now());
+	public enqueueDelivery(
+		chatId: string,
+		messageId: number,
+		profileId: string,
+		notification: string,
+	): void {
+		this.enqueueOutbox.run(
+			chatId,
+			messageId,
+			profileId,
+			notification,
+			Date.now(),
+		);
 	}
 	public getDueDeliveries(): DeliveryTask[] {
-		return this.findDueOutbox.all(Date.now()).map((task) => ({ id: task.id, chatId: task.chat_id, messageId: task.message_id, profileId: task.profile_id, notification: task.notification, attempts: task.attempts }));
+		return this.findDueOutbox.all(Date.now()).map((task) => ({
+			id: task.id,
+			chatId: task.chat_id,
+			messageId: task.message_id,
+			profileId: task.profile_id,
+			notification: task.notification,
+			attempts: task.attempts,
+		}));
 	}
-	public markDeliverySucceeded(task: DeliveryTask): void { this.markDeliveredTransaction(task.id, task.chatId, task.messageId); this.cleanupExpired(); }
-	public rescheduleDelivery(task: DeliveryTask, nextAttemptAt: number): void { this.rescheduleOutbox.run(nextAttemptAt, task.id); }
-	public getOutboxCount(): number { return this.countOutbox.get()?.count ?? 0; }
-	public incrementCounter(name: string): void { this.incrementCounterStatement.run(name); }
-	public getCounters(): Record<string, number> { return Object.fromEntries(this.readCounters.all().map((row) => [row.name, row.value])); }
-	public isCrossChannelDedupEnabled(): boolean { return this.getFingerprintFlag.get()?.enabled === 1; }
-	public setCrossChannelDedupEnabled(enabled: boolean): void { this.setFingerprintFlagStatement.run(enabled ? 1 : 0); }
-	public hasFingerprint(fingerprint: string): boolean { return this.findFingerprint.get(fingerprint) !== undefined; }
-	public saveFingerprint(fingerprint: string): void { this.insertFingerprint.run(fingerprint); }
+	public markDeliverySucceeded(task: DeliveryTask): void {
+		this.markDeliveredTransaction(task.id, task.chatId, task.messageId);
+		this.cleanupExpired();
+	}
+	public rescheduleDelivery(task: DeliveryTask, nextAttemptAt: number): void {
+		this.rescheduleOutbox.run(nextAttemptAt, task.id);
+	}
+	public getOutboxCount(): number {
+		return this.countOutbox.get()?.count ?? 0;
+	}
+	public incrementCounter(name: string): void {
+		this.incrementCounterStatement.run(name);
+	}
+	public getCounters(): Record<string, number> {
+		return Object.fromEntries(
+			this.readCounters.all().map((row) => [row.name, row.value]),
+		);
+	}
+	public isCrossChannelDedupEnabled(): boolean {
+		return this.getFingerprintFlag.get()?.enabled === 1;
+	}
+	public setCrossChannelDedupEnabled(enabled: boolean): void {
+		this.setFingerprintFlagStatement.run(enabled ? 1 : 0);
+	}
+	public hasFingerprint(fingerprint: string): boolean {
+		return this.findFingerprint.get(fingerprint) !== undefined;
+	}
+	public saveFingerprint(fingerprint: string): void {
+		this.insertFingerprint.run(fingerprint);
+	}
 
 	public close(): void {
 		if (this.database.open) {

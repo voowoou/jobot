@@ -166,7 +166,9 @@ export async function startApplication(): Promise<void> {
 	const environment = loadEnvironment();
 	configureLogger(environment.logLevel);
 	if (process.env.CROSS_CHANNEL_DEDUP_ENABLED !== undefined) {
-		db.setCrossChannelDedupEnabled(process.env.CROSS_CHANNEL_DEDUP_ENABLED === "true");
+		db.setCrossChannelDedupEnabled(
+			process.env.CROSS_CHANNEL_DEDUP_ENABLED === "true",
+		);
 	}
 	const profileStore = new ProfileStore();
 	const client = createTelegramClient(environment);

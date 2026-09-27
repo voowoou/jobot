@@ -5,10 +5,19 @@ import { join } from "node:path";
 import test from "node:test";
 import { ProfileStore } from "../config/profile-store.js";
 import type { BotDialogState } from "../db/index.js";
-import { BotCommandRouter, isOwner, parseCallback, parseCommand } from "./router.js";
+import {
+	BotCommandRouter,
+	isOwner,
+	parseCallback,
+	parseCommand,
+} from "./router.js";
 
 const sourceControls = {
-	getSourceSettings: () => ({ mode: "all" as const, chatIds: [], paused: false }),
+	getSourceSettings: () => ({
+		mode: "all" as const,
+		chatIds: [],
+		paused: false,
+	}),
 	listSourceChats: () => [],
 	setSourceMode: () => undefined,
 	addSourceChat: () => undefined,
@@ -28,13 +37,25 @@ test("parses bot commands and compares owner IDs as strings", () => {
 });
 
 test("parses only versioned callback data with valid profile IDs", () => {
-	assert.deepEqual(parseCallback("v1:profiles"), { action: "profiles", profileId: undefined });
-	assert.deepEqual(parseCallback("v1:profile-edit:frontend_2"), { action: "profile-edit", profileId: "frontend_2" });
+	assert.deepEqual(parseCallback("v1:profiles"), {
+		action: "profiles",
+		profileId: undefined,
+	});
+	assert.deepEqual(parseCallback("v1:profile-edit:frontend_2"), {
+		action: "profile-edit",
+		profileId: "frontend_2",
+	});
 	assert.equal(parseCallback("v1:profile-edit"), undefined);
 	assert.equal(parseCallback("v0:profiles"), undefined);
 	assert.equal(parseCallback("v1:profile-edit:../../secret"), undefined);
-	assert.deepEqual(parseCallback("v1:source-add:-100123"), { action: "source-add", chatId: "-100123" });
-	assert.deepEqual(parseCallback("v1:sources-recent:2"), { action: "sources-recent", page: 2 });
+	assert.deepEqual(parseCallback("v1:source-add:-100123"), {
+		action: "source-add",
+		chatId: "-100123",
+	});
+	assert.deepEqual(parseCallback("v1:sources-recent:2"), {
+		action: "sources-recent",
+		page: 2,
+	});
 });
 
 test("router denies non-owner and cancels only the owner's active dialog", async () => {
@@ -132,10 +153,13 @@ test("callback controls enforce ownership and require deletion confirmation", as
 	const replies: Array<{ text: string; markup?: unknown }> = [];
 	const answers: string[] = [];
 	const profiles = new ProfileStore(join(directory, "profiles.yaml"));
-	profiles.saveUserProfiles([{ id: "frontend", title: "Frontend", enabled: true, primary: ["react"] }]);
+	profiles.saveUserProfiles([
+		{ id: "frontend", title: "Frontend", enabled: true, primary: ["react"] },
+	]);
 	const router = new BotCommandRouter(
 		{
-			sendText: async (_chatId, text, markup) => void replies.push({ text, markup }),
+			sendText: async (_chatId, text, markup) =>
+				void replies.push({ text, markup }),
 			answerCallbackQuery: async (_id, text) => void answers.push(text ?? ""),
 		},
 		{
@@ -148,18 +172,34 @@ test("callback controls enforce ownership and require deletion confirmation", as
 		profiles,
 	);
 	try {
-		await router.handleCallback({ chatId: "2", callbackId: "other", data: "v1:profile-delete:frontend" });
+		await router.handleCallback({
+			chatId: "2",
+			callbackId: "other",
+			data: "v1:profile-delete:frontend",
+		});
 		assert.equal(profiles.getUserProfiles()?.length, 1);
 		assert.equal(answers[0], "Нет доступа.");
 
-		await router.handleCallback({ chatId: "1", callbackId: "delete", data: "v1:profile-delete:frontend" });
+		await router.handleCallback({
+			chatId: "1",
+			callbackId: "delete",
+			data: "v1:profile-delete:frontend",
+		});
 		assert.match(replies.at(-1)?.text ?? "", /Удалить профиль/);
 		assert.equal(profiles.getUserProfiles()?.length, 1);
 
-		await router.handleCallback({ chatId: "1", callbackId: "confirm", data: "v1:profile-delete-confirm:frontend" });
+		await router.handleCallback({
+			chatId: "1",
+			callbackId: "confirm",
+			data: "v1:profile-delete-confirm:frontend",
+		});
 		assert.equal(profiles.getUserProfiles()?.length, 0);
 
-		await router.handleCallback({ chatId: "1", callbackId: "stale", data: "v1:profile-edit:frontend" });
+		await router.handleCallback({
+			chatId: "1",
+			callbackId: "stale",
+			data: "v1:profile-edit:frontend",
+		});
 		assert.match(replies.at(-1)?.text ?? "", /устарела/i);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
@@ -167,7 +207,10 @@ test("callback controls enforce ownership and require deletion confirmation", as
 });
 
 test("recent sources paginate and can be selected through callbacks", async () => {
-	const replies: Array<{ text: string; markup?: { inline_keyboard: Array<Array<{ callback_data: string }>> } }> = [];
+	const replies: Array<{
+		text: string;
+		markup?: { inline_keyboard: Array<Array<{ callback_data: string }>> };
+	}> = [];
 	const selected = new Set<string>();
 	const recent = Array.from({ length: 7 }, (_, index) => ({
 		chatId: `-100${index + 1}`,
@@ -177,13 +220,19 @@ test("recent sources paginate and can be selected through callbacks", async () =
 	}));
 	const router = new BotCommandRouter(
 		{
-			sendText: async (_chatId, text, markup) => void replies.push({ text, markup }),
+			sendText: async (_chatId, text, markup) =>
+				void replies.push({ text, markup }),
 			answerCallbackQuery: async () => undefined,
 		},
 		{
 			...sourceControls,
-			getSourceSettings: () => ({ mode: "all" as const, chatIds: [...selected], paused: false }),
-			listRecentSourceChats: (limit, offset = 0) => recent.slice(offset, offset + limit),
+			getSourceSettings: () => ({
+				mode: "all" as const,
+				chatIds: [...selected],
+				paused: false,
+			}),
+			listRecentSourceChats: (limit, offset = 0) =>
+				recent.slice(offset, offset + limit),
 			getRecentSourceCount: () => recent.length,
 			addSourceChat: (chatId) => void selected.add(chatId),
 			removeSourceChat: (chatId) => selected.delete(chatId),
@@ -196,7 +245,11 @@ test("recent sources paginate and can be selected through callbacks", async () =
 	await router.handle({ chatId: "1", text: "/sources recent" });
 	assert.match(replies[0].text, /1\/2/);
 	assert.match(JSON.stringify(replies[0].markup), /sources-recent:1/);
-	await router.handleCallback({ chatId: "1", callbackId: "add", data: "v1:source-add:-1001" });
+	await router.handleCallback({
+		chatId: "1",
+		callbackId: "add",
+		data: "v1:source-add:-1001",
+	});
 	assert.equal(selected.has("-1001"), true);
 	assert.match(JSON.stringify(replies.at(-1)?.markup), /source-remove:-1001/);
 });
@@ -210,10 +263,18 @@ test("switching to allowlist explains the effect before changing the mode", asyn
 		{
 			...sourceControls,
 			getSourceSettings: () => ({ mode, chatIds: [], paused: false }),
-			setSourceMode: (next) => { mode = next; },
-			clearBotDialog: () => { const exists = dialog !== undefined; dialog = undefined; return exists; },
+			setSourceMode: (next) => {
+				mode = next;
+			},
+			clearBotDialog: () => {
+				const exists = dialog !== undefined;
+				dialog = undefined;
+				return exists;
+			},
 			getBotDialog: () => dialog,
-			saveBotDialog: (chatId, command, step, draft) => { dialog = { chatId, command, step, draft, updatedAt: "now" }; },
+			saveBotDialog: (chatId, command, step, draft) => {
+				dialog = { chatId, command, step, draft, updatedAt: "now" };
+			},
 		},
 		"1",
 	);
