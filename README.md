@@ -1,111 +1,134 @@
 # Jobot
 
-Jobot отслеживает новые сообщения в Telegram-каналах и чатах от имени вашего аккаунта, находит подходящие вакансии и отправляет карточки в личный чат с Telegram-ботом.
+Jobot отслеживает новые сообщения в группах, супергруппах и каналах, доступных вашему личному Telegram-аккаунту, находит подходящие вакансии и отправляет карточки в личный чат с Telegram-ботом.
 
-Сейчас включён профиль Frontend: React, Next.js, JavaScript, Frontend; вакансии уровня Senior и Lead исключаются. Профили находятся в `src/config/profiles.ts`.
+Личные диалоги и ваши собственные исходящие сообщения не обрабатываются. Источники читает личный аккаунт через GramJS; бот используется только для доставки уведомлений.
 
 ## Требования
 
-- Node.js 20 или новее (рекомендуется актуальный LTS);
+- Node.js 20+ (рекомендуется актуальный LTS);
 - pnpm;
-- Telegram API ID и API hash.
-- Бот, созданный через @BotFather.
+- Telegram API ID и API hash;
+- бот, созданный через @BotFather.
 
-Для `better-sqlite3` на Linux может потребоваться компилятор C/C++ и Python 3, если для вашей версии Node.js нет готового бинарника.
+Для `better-sqlite3` на Linux могут потребоваться C/C++ compiler и Python 3, если для вашей версии Node.js нет готового бинарника.
 
-## Установка
+## Установка и авторизация
 
 ```bash
 pnpm install
 cp .env.example .env
+pnpm auth
 ```
 
-В PowerShell вместо `cp`:
+В PowerShell вместо `cp` используйте:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Откройте `.env` и заполните:
+Заполните в `.env`:
 
 ```dotenv
 TELEGRAM_API_ID=123456
 TELEGRAM_API_HASH=your_api_hash
+TELEGRAM_STRING_SESSION= # значение, выведенное pnpm auth
 TELEGRAM_BOT_TOKEN=123456:bot_token
 TELEGRAM_BOT_CHAT_ID=
 LOG_LEVEL=info
 ```
 
-`TELEGRAM_API_ID` и `TELEGRAM_API_HASH` создаются на [my.telegram.org/apps](https://my.telegram.org/apps). Не передавайте их и `TELEGRAM_STRING_SESSION` другим людям.
+`pnpm auth` спросит номер, код Telegram и пароль двухфакторной аутентификации, если он включён. Не передавайте `.env` и `TELEGRAM_STRING_SESSION` другим людям.
 
-## Авторизация
+## Настройка доставки ботом
 
-Запустите интерактивную авторизацию:
+1. Создайте бота через @BotFather.
+2. Откройте личный чат с ним и отправьте `/start`.
+3. Добавьте token в `TELEGRAM_BOT_TOKEN`.
+4. Выполните:
 
-```bash
-pnpm auth
-```
+   ```bash
+   pnpm bot:setup
+   ```
 
-Скрипт спросит номер телефона, код Telegram и пароль двухфакторной аутентификации, если он включён. По завершении он выведет `StringSession`. Вставьте это значение в `.env`:
+5. Скопируйте выведенное значение в `TELEGRAM_BOT_CHAT_ID`.
 
-```dotenv
-TELEGRAM_STRING_SESSION=your_string_session
-```
+## Профили поиска
 
-После этого повторная авторизация не требуется, пока сессия действительна.
-
-## Настройка бота
-
-Создайте бота через @BotFather, откройте с ним личный чат и отправьте `/start`. Добавьте token в `TELEGRAM_BOT_TOKEN`, затем выполните:
+Профили хранятся в `data/profiles.yaml`. Файл создаётся через CLI и исключён из Git. Строки — обычные слова и фразы, не regexp.
 
 ```bash
-pnpm bot:setup
+pnpm profiles:list
+pnpm profiles:add
+pnpm profiles:edit <id>
+pnpm profiles:remove <id>
+pnpm profiles:validate
 ```
 
-Команда проверит token и выведет строку для `TELEGRAM_BOT_CHAT_ID`. Добавьте её в `.env`.
+Перед изменением CLI показывает итоговый профиль и просит подтверждение. Изменения применяются после перезапуска Jobot.
 
-## Запуск
+Если `data/profiles.yaml` отсутствует или пуст, используется встроенный Frontend-профиль. Пример структуры доступен в [data/profiles.example.yaml](data/profiles.example.yaml).
 
-Для обычного запуска:
+## Запуск и проверка
 
 ```bash
 pnpm start
 ```
 
-Для разработки с перезапуском при изменениях:
+Для разработки:
 
 ```bash
 pnpm dev
 ```
 
-При запуске Jobot проверяет сессию и bot token, затем начинает слушать только входящие сообщения. Подходящая вакансия сохраняется в `data/app.db` после успешной отправки уведомления. Одна и та же пара чат/сообщение не будет отправлена повторно в течение 30 дней.
+После JSON-лога `application.started` отправьте **с другого аккаунта** новое сообщение в группу или канал, например:
+
+```text
+Вакансия: ищем React middle разработчика, remote.
+```
+
+Подходящая вакансия отправляется в личный чат с ботом и только затем отмечается обработанной в `data/app.db`. Одинаковая пара чат/сообщение не отправляется повторно 30 дней. История до запуска не обрабатывается.
+
+Проверить код без Telegram-ключей:
+
+```bash
+pnpm typecheck
+pnpm test
+```
 
 ## PM2 / VPS
-
-Установите PM2 на сервере:
 
 ```bash
 pnpm add -g pm2
 pm2 start ecosystem.config.cjs
 pm2 logs telegram-vacancy-bot
-```
-
-Чтобы процесс пережил перезагрузку сервера:
-
-```bash
 pm2 save
 pm2 startup
 ```
 
-Выполните команду, которую выведет `pm2 startup`, от пользователя, запускающего приложение. Для обновления кода на сервере: установите зависимости, затем выполните `pm2 restart telegram-vacancy-bot`.
+Выполните команду, которую напечатает `pm2 startup`, от пользователя, запускающего процесс. PM2 отправляет `SIGTERM`; Jobot прекращает приём новых сообщений, отключает Telegram-клиент и закрывает SQLite.
 
-## Полезные команды
+### Обновление без потери данных
+
+На сервере не удаляйте `.env` и каталог `data/`: в нём находятся SQLite и пользовательские профили.
 
 ```bash
+git pull
+pnpm install --frozen-lockfile
 pnpm typecheck
-pm2 status
-pm2 restart telegram-vacancy-bot
-pm2 logs telegram-vacancy-bot
+pnpm test
+pm2 reload telegram-vacancy-bot
 ```
 
-`.env`, база `data/app.db`, сессии и `node_modules` исключены из Git.
+## Troubleshooting
+
+| Симптом | Что проверить |
+| --- | --- |
+| Бот не присылает сообщения | Бот должен получить `/start`; проверьте `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_CHAT_ID` и логи `vacancy.delivery_failed`. |
+| `bot was blocked by the user` | Откройте чат с ботом, отправьте `/start`, затем перезапустите Jobot. |
+| `chat not found` | Повторно выполните `pnpm bot:setup` и обновите `TELEGRAM_BOT_CHAT_ID`. |
+| Нет реакции на тестовую вакансию | Сообщение должно быть новым, из группы/супергруппы/канала и от другого аккаунта; личные чаты и ваши сообщения игнорируются. |
+| Сессия не авторизована | Повторите `pnpm auth` и замените `TELEGRAM_STRING_SESSION` в `.env`. |
+| Ошибка SQLite | Убедитесь, что процесс может писать в `data/`, что на диске есть место и база не открыта несколькими экземплярами Jobot. |
+
+`.env`, сессии, `data/app.db` и `data/profiles.yaml` не попадают в Git.

@@ -47,7 +47,14 @@ async function getMessageContext(event: NewMessageEvent): Promise<{
 		throw new Error("Unable to determine the source chat ID");
 	}
 
-	const chat = await event.getChat();
+	let chat = await event.getChat();
+	if (!chat && event.client && event.chatId) {
+		try {
+			chat = await event.client.getEntity(event.chatId);
+		} catch {
+			// A missing title must not prevent delivery of an otherwise valid vacancy.
+		}
+	}
 	const username =
 		chat && "username" in chat && typeof chat.username === "string"
 			? chat.username
