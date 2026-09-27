@@ -19,3 +19,29 @@ test("deduplicates messages in a temporary SQLite database", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("persists bot update cursor and dialog state", () => {
+  const directory = mkdtempSync(join(tmpdir(), "jobot-db-"));
+  const path = join(directory, "app.db");
+  const storage = new DeduplicationStorage(path);
+
+  try {
+    assert.equal(storage.getNextBotUpdateId(), undefined);
+    storage.setNextBotUpdateId(12);
+    storage.saveBotDialog("-1007", "profiles", "title", { id: "frontend" });
+    storage.close();
+
+    const restarted = new DeduplicationStorage(path);
+    assert.equal(restarted.getNextBotUpdateId(), 12);
+    assert.deepEqual(restarted.getBotDialog("-1007"), {
+      chatId: "-1007", command: "profiles", step: "title", draft: { id: "frontend" },
+      updatedAt: restarted.getBotDialog("-1007")?.updatedAt,
+    });
+    assert.equal(restarted.clearBotDialog("-1007"), true);
+    assert.equal(restarted.getBotDialog("-1007"), undefined);
+    restarted.close();
+  } finally {
+    storage.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

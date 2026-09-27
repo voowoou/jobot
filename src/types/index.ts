@@ -59,5 +59,5 @@ export interface BotEnvironment {
 
 export interface AppEnvironment extends TelegramEnvironment {
   telegramBotToken: string;
-  telegramBotChatId: string;
+  telegramBotChatId?: string;
 }

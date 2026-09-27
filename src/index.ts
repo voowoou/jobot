@@ -2,6 +2,8 @@ import { FloodWaitError } from "telegram/errors/index.js";
 import { NewMessage, type NewMessageEvent } from "telegram/events/index.js";
 import { getDisplayName } from "telegram/Utils.js";
 import { BotApiError, TelegramBotClient } from "./bot/client.js";
+import { BotCommandRouter } from "./bot/router.js";
+import { BotUpdateProcessor } from "./bot/updates.js";
 import { loadEnvironment } from "./config/env.js";
 import { loadSearchProfiles } from "./config/profile-config.js";
 import { db } from "./db/index.js";
@@ -189,6 +191,8 @@ export async function startApplication(): Promise<void> {
 		environment.telegramBotChatId,
 	);
 	const botIdentity = await bot.getMe();
+	const commandRouter = new BotCommandRouter(bot, db, environment.telegramBotChatId);
+	const updateProcessor = new BotUpdateProcessor(bot, commandRouter, db);
 
 	const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
 		if (shuttingDown) {
@@ -197,6 +201,7 @@ export async function startApplication(): Promise<void> {
 
 		shuttingDown = true;
 		logEvent("info", "application.shutting_down", { signal });
+		await updateProcessor.stop();
 		await client.disconnect();
 		db.close();
 	};
@@ -217,6 +222,7 @@ export async function startApplication(): Promise<void> {
 			"Telegram session is not authorized. Run `pnpm auth` and set TELEGRAM_STRING_SESSION.",
 		);
 	}
+	updateProcessor.start();
 
 	logEvent("info", "application.started", {
 		bot: botIdentity.username || String(botIdentity.id),

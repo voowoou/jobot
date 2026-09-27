@@ -61,11 +61,7 @@ export function loadBotEnvironment(requireChatId = false): BotEnvironment {
 }
 
 export function loadEnvironment(): AppEnvironment {
-  const botEnvironment = loadBotEnvironment(true);
-
-  if (!botEnvironment.telegramBotChatId) {
-    throw new Error("Missing required environment variable: TELEGRAM_BOT_CHAT_ID");
-  }
+  const botEnvironment = loadBotEnvironment();
 
   return {
     ...loadTelegramEnvironment(),

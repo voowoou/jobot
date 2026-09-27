@@ -14,7 +14,9 @@ export interface BotIdentity {
 }
 
 export interface BotUpdate {
+  update_id: number;
   message?: {
+    text?: string;
     chat: {
       id: number;
       type: string;
@@ -46,8 +48,15 @@ export class TelegramBotClient {
     return this.call<BotIdentity>("getMe");
   }
 
-  public async getUpdates(): Promise<BotUpdate[]> {
-    return this.call<BotUpdate[]>("getUpdates", { allowed_updates: JSON.stringify(["message"]) });
+  public async getUpdates(offset?: number, timeout = 0, signal?: AbortSignal): Promise<BotUpdate[]> {
+    const parameters: Record<string, string> = { allowed_updates: JSON.stringify(["message"]) };
+    if (offset !== undefined) parameters.offset = String(offset);
+    if (timeout > 0) parameters.timeout = String(timeout);
+    return this.call<BotUpdate[]>("getUpdates", parameters, signal);
+  }
+
+  public async sendText(chatId: string, text: string): Promise<void> {
+    await this.call("sendMessage", { chat_id: chatId, text });
   }
 
   public async sendNotification(text: string): Promise<void> {
@@ -63,7 +72,7 @@ export class TelegramBotClient {
     });
   }
 
-  private async call<T>(method: string, parameters: Record<string, string> = {}): Promise<T> {
+  private async call<T>(method: string, parameters: Record<string, string> = {}, signal?: AbortSignal): Promise<T> {
     let response: Response;
 
     try {
@@ -71,6 +80,7 @@ export class TelegramBotClient {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(parameters),
+        signal,
       });
     } catch {
       // Do not include the underlying fetch error: it may contain the request URL and bot token.
