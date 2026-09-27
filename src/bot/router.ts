@@ -173,15 +173,21 @@ export function parseCommand(text: string): string | undefined {
 }
 const ask = (step: Step) =>
 	({
-		id: "Введите ID профиля:",
-		title: "Введите название профиля:",
-		enabled: "Включить профиль? (да/нет)",
-		primary: "Основные термины через запятую:",
-		context: "Маркеры вакансии через запятую или -:",
-		exclude: "Исключения через запятую или -:",
-		grades: "Грейды через запятую или -:",
-		workFormats: "Форматы: remote: remote, удалённо; office: офис, или -:",
-		confirm: "Сохранить профиль? (да/нет)",
+		id: "ID профиля — короткое имя латиницей, без пробелов.\nПример: frontend",
+		title:
+			"Название для карточек вакансий.\nПример: Frontend Developer — React / Next.js",
+		enabled: "Включить профиль сразу? Выберите «Да» или «Нет».",
+		primary:
+			"Главные технологии: найдётся вакансия с хотя бы одним словом.\nПример: react, typescript, next.js, фронтенд",
+		context:
+			"Признаки именно вакансии. Необязательный шаг.\nПример: вакансия, ищем, frontend-разработчик\nОтправьте «-», чтобы пропустить.",
+		exclude:
+			"Слова, при которых вакансию нужно пропустить. Необязательный шаг.\nПример: senior, lead\nОтправьте «-», чтобы пропустить.",
+		grades:
+			"Подходящие уровни. Необязательный шаг.\nПример: junior, middle\nОтправьте «-», чтобы принимать любой уровень.",
+		workFormats:
+			"Формат: название: варианты через запятую; несколько форматов разделяйте «;».\nПример: remote: remote, удалённо; hybrid: hybrid, гибрид\nОтправьте «-», чтобы принимать любой формат.",
+		confirm: "Сохранить профиль?",
 	})[step];
 const optionalSteps: readonly Step[] = [
 	"context",
@@ -230,7 +236,7 @@ function wizardPrompt(step: Step, draft: Draft): string {
 		draft.mode === "edit"
 			? `\nТекущее значение: ${currentValue(step, draft.profile)}\nОтправьте =, чтобы оставить его без изменения.`
 			: "";
-	return `Шаг ${stepNumber(step)}/${steps.length}. ${ask(step)}${editHint}`;
+	return `Шаг ${stepNumber(step)}/${steps.length}\n${ask(step)}${editHint}`;
 }
 function profileSummary(profile: Partial<UserProfile>): string {
 	const formats = profile.workFormats
@@ -701,7 +707,7 @@ export class BotCommandRouter {
 								`${profile.id} — ${profile.title} (${profile.enabled ? "включён" : "выключен"})`,
 						)
 						.join("\n")
-				: "Пользовательских профилей нет: используется встроенный Frontend-профиль. Чтобы создать свой профиль, используйте /profiles add.",
+				: "Профилей пока нет. Создайте первый: /profiles add. Пока профиль не создан, Jobot не присылает вакансии.",
 			keyboard,
 		);
 	}

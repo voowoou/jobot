@@ -68,11 +68,11 @@ test("rejects duplicate profile IDs and an empty primary list", () => {
 	);
 });
 
-test("uses the built-in Frontend profile when the user file is absent", () => {
+test("uses no profiles when the user file is absent", () => {
 	const directory = mkdtempSync(join(tmpdir(), "jobot-profiles-"));
 	try {
 		const profiles = loadSearchProfiles(join(directory, "missing.yaml"));
-		assert.equal(profiles[0].id, "frontend");
+		assert.deepEqual(profiles, []);
 	} finally {
 		rmSync(directory, { recursive: true, force: true });
 	}
@@ -95,7 +95,7 @@ test("hot-reloads profiles only after a validated atomic write", () => {
 	const profilePath = join(directory, "profiles.yaml");
 	const store = new ProfileStore(profilePath);
 	try {
-		assert.equal(store.get()[0].id, "frontend");
+		assert.deepEqual(store.get(), []);
 		store.saveUserProfiles([
 			{ id: "go", title: "Go", enabled: true, primary: ["golang"] },
 		]);
