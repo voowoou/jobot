@@ -14,9 +14,13 @@ function toTerms(value: string): string[] {
     .filter(Boolean);
 }
 
+function askText(label: string, defaultValue?: string): Promise<string> {
+  return defaultValue === undefined ? input.text(label) : input.text(label, { default: defaultValue });
+}
+
 async function askRequired(label: string, initial?: string): Promise<string> {
   while (true) {
-    const value = (await input.text(label, initial ? { default: initial } : undefined)).trim();
+    const value = (await askText(label, initial)).trim();
     if (value) {
       return value;
     }
@@ -25,6 +29,16 @@ async function askRequired(label: string, initial?: string): Promise<string> {
   }
 }
 
+function askTerms(
+  label: string,
+  initial: string[] | undefined,
+  required: true,
+): Promise<string[]>;
+function askTerms(
+  label: string,
+  initial: string[] | undefined,
+  required?: false,
+): Promise<string[] | undefined>;
 async function askTerms(
   label: string,
   initial: string[] | undefined,
@@ -33,17 +47,19 @@ async function askTerms(
   const hint = initial ? " (через запятую; - чтобы очистить)" : " (через запятую)";
 
   while (true) {
-    const value = (
-      await input.text(`${label}${hint}`, initial ? { default: initial.join(", ") } : undefined)
-    ).trim();
+    const value = (await askText(`${label}${hint}`, initial?.join(", "))).trim();
 
     if (value === "-" && !required) {
       return undefined;
     }
 
     const terms = toTerms(value);
-    if (terms.length || !required) {
-      return terms.length ? terms : undefined;
+    if (terms.length) {
+      return terms;
+    }
+
+    if (!required) {
+      return undefined;
     }
 
     console.log("Укажите хотя бы один термин.");
@@ -77,7 +93,7 @@ async function askWorkFormats(
 
   const result: Record<string, string[]> = {};
   for (const name of names) {
-    result[name] = (await askTerms(`Термины для «${name}»`, initial?.[name], true))!;
+    result[name] = await askTerms(`Термины для «${name}»`, initial?.[name], true);
   }
 
   return result;
@@ -88,7 +104,7 @@ async function askProfile(initial?: UserProfile): Promise<UserProfile> {
     id: await askRequired("ID профиля", initial?.id),
     title: await askRequired("Название профиля", initial?.title),
     enabled: await askEnabled(initial?.enabled),
-    primary: (await askTerms("Основные технологии", initial?.primary, true))!,
+    primary: await askTerms("Основные технологии", initial?.primary, true),
     context: await askTerms("Маркеры вакансии", initial?.context),
     exclude: await askTerms("Исключения", initial?.exclude),
     grades: await askTerms("Грейды", initial?.grades),
