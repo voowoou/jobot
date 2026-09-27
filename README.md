@@ -55,6 +55,14 @@ LOG_LEVEL=info
 
 ## Профили поиска
 
+## Управление через бота
+
+Команды Bot API принимаются через long polling: публичный HTTPS endpoint не нужен. Не запускайте одновременно `pnpm bot:setup` и `pnpm start`, поскольку оба читают updates.
+
+Только владелец из `TELEGRAM_BOT_CHAT_ID` может использовать `/profiles`, `/sources`, `/pause`, `/resume`, `/status`, `/test` и `/cancel`. Профиль создаётся через `/profiles add`, а CLI остаётся резервным способом управления. Незавершённый мастер переживает рестарт.
+
+`/sources mode <all|allowlist|denylist>` меняет режим источников, а `/sources add <chat_id>` и `/sources remove <chat_id>` управляют списком. `CROSS_CHANNEL_DEDUP_ENABLED=true` включает подавление идентичных перепостов между каналами; по умолчанию функция выключена.
+
 Профили хранятся в `data/profiles.yaml`. Файл создаётся через CLI и исключён из Git. Строки — обычные слова и фразы, не regexp.
 
 ```bash
