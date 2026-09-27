@@ -111,3 +111,25 @@ test("keeps recent group and channel sources with a bounded, expiring list", () 
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
+
+test("expires old fingerprints and preserves recent fingerprints across a checkpoint", () => {
+	const directory = mkdtempSync(join(tmpdir(), "jobot-db-"));
+	const path = join(directory, "app.db");
+	const storage = new DeduplicationStorage(path);
+	try {
+		const now = Date.now();
+		storage.saveFingerprint("old", now - 31 * 24 * 60 * 60 * 1_000);
+		storage.saveFingerprint("fresh", now);
+		assert.equal(storage.hasFingerprint("old"), false);
+		assert.equal(storage.hasFingerprint("fresh"), true);
+		storage.checkpointWal();
+		storage.close();
+
+		const restarted = new DeduplicationStorage(path);
+		assert.equal(restarted.hasFingerprint("fresh"), true);
+		restarted.close();
+	} finally {
+		storage.close();
+		rmSync(directory, { recursive: true, force: true });
+	}
+});

@@ -91,6 +91,7 @@ export class DeduplicationStorage {
 	private readonly setFingerprintFlagStatement;
 	private readonly findFingerprint;
 	private readonly insertFingerprint;
+	private readonly deleteExpiredFingerprints;
 
 	public constructor(databasePath = DEFAULT_DATABASE_PATH) {
 		mkdirSync(dirname(databasePath), { recursive: true });
@@ -143,7 +144,16 @@ export class DeduplicationStorage {
       );
       CREATE TABLE IF NOT EXISTS app_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS delivery_settings (id INTEGER PRIMARY KEY CHECK (id = 1), cross_channel_dedup INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS message_fingerprints (fingerprint TEXT PRIMARY KEY, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS message_fingerprints (fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
+    `);
+		// Earlier versions stored timestamps as SQLite datetime text. Convert them once so
+		// retention can use an indexed numeric comparison without losing existing fingerprints.
+		this.database.exec(`
+      UPDATE message_fingerprints
+      SET created_at = CAST(strftime('%s', created_at) AS INTEGER) * 1000
+      WHERE typeof(created_at) = 'text';
+      CREATE INDEX IF NOT EXISTS message_fingerprints_created_at
+      ON message_fingerprints(created_at);
     `);
 
 		this.findProcessed = this.database.prepare<
@@ -280,12 +290,16 @@ export class DeduplicationStorage {
 			[string],
 			{ fingerprint: string }
 		>(`SELECT fingerprint FROM message_fingerprints WHERE fingerprint = ?`);
-		this.insertFingerprint = this.database.prepare<[string]>(
-			`INSERT OR IGNORE INTO message_fingerprints (fingerprint) VALUES (?)`,
+		this.insertFingerprint = this.database.prepare<[string, number]>(
+			`INSERT OR IGNORE INTO message_fingerprints (fingerprint, created_at) VALUES (?, ?)`,
+		);
+		this.deleteExpiredFingerprints = this.database.prepare<[number]>(
+			`DELETE FROM message_fingerprints WHERE created_at < ?`,
 		);
 
 		this.cleanupExpired();
 		this.cleanupRecentSources();
+		this.cleanupExpiredFingerprints();
 	}
 
 	public isProcessed(chatId: string, messageId: number): boolean {
@@ -413,9 +427,13 @@ export class DeduplicationStorage {
 	public markDeliverySucceeded(task: DeliveryTask): void {
 		this.markDeliveredTransaction(task.id, task.chatId, task.messageId);
 		this.cleanupExpired();
+		this.cleanupExpiredFingerprints();
 	}
 	public rescheduleDelivery(task: DeliveryTask, nextAttemptAt: number): void {
 		this.rescheduleOutbox.run(nextAttemptAt, task.id);
+	}
+	public discardDelivery(task: DeliveryTask): void {
+		this.deleteOutbox.run(task.id);
 	}
 	public getOutboxCount(): number {
 		return this.countOutbox.get()?.count ?? 0;
@@ -437,12 +455,28 @@ export class DeduplicationStorage {
 	public hasFingerprint(fingerprint: string): boolean {
 		return this.findFingerprint.get(fingerprint) !== undefined;
 	}
-	public saveFingerprint(fingerprint: string): void {
-		this.insertFingerprint.run(fingerprint);
+	public saveFingerprint(fingerprint: string, createdAt = Date.now()): void {
+		this.insertFingerprint.run(fingerprint, createdAt);
+		this.cleanupExpiredFingerprints(createdAt);
+	}
+	public cleanupExpiredFingerprints(now = Date.now()): number {
+		return this.deleteExpiredFingerprints.run(
+			now - RETENTION_DAYS * 24 * 60 * 60 * 1_000,
+		).changes;
+	}
+	public checkpointWal(): void {
+		// The application owns the only writer. This method is called during graceful
+		// shutdown, after polling has stopped, and never removes WAL files directly.
+		this.database.pragma("wal_checkpoint(TRUNCATE)");
 	}
 
 	public close(): void {
 		if (this.database.open) {
+			try {
+				this.checkpointWal();
+			} catch {
+				// A checkpoint failure must not leave the database handle open on shutdown.
+			}
 			this.database.close();
 		}
 	}
