@@ -1,12 +1,12 @@
-import { FloodWaitError } from "telegram/errors/index.js";
 import { NewMessage, type NewMessageEvent } from "telegram/events/index.js";
 import { getDisplayName } from "telegram/Utils.js";
-import { BotApiError, TelegramBotClient } from "./bot/client.js";
+import { TelegramBotClient } from "./bot/client.js";
 import { BotCommandRouter } from "./bot/router.js";
 import { BotUpdateProcessor } from "./bot/updates.js";
 import { loadEnvironment } from "./config/env.js";
 import { ProfileStore } from "./config/profile-store.js";
 import { db } from "./db/index.js";
+import { DeliveryOutboxProcessor } from "./services/delivery-outbox.js";
 import { formatNotification } from "./services/formatter.js";
 import { configureLogger, logEvent } from "./services/logger.js";
 import { matchVacancy } from "./services/matcher.js";
@@ -14,24 +14,7 @@ import { createTelegramClient } from "./telegram/client.js";
 import { isAllowedSource, isVacancySource } from "./telegram/source-filter.js";
 import type { SearchProfile } from "./types/index.js";
 
-let floodWaitUntil = 0;
 let shuttingDown = false;
-
-function sleep(milliseconds: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function waitForFloodPause(): Promise<void> {
-	const remainingMilliseconds = floodWaitUntil - Date.now();
-
-	if (remainingMilliseconds > 0) {
-		await sleep(remainingMilliseconds);
-	}
-}
-
-function isFloodWaitError(error: unknown): error is FloodWaitError {
-	return error instanceof FloodWaitError;
-}
 
 function getInternalPostLink(chatId: string, messageId: number): string {
 	const internalChatId = chatId.replace(/^-100/, "");
@@ -73,7 +56,6 @@ async function getMessageContext(event: NewMessageEvent): Promise<{
 
 async function processMessage(
 	event: NewMessageEvent,
-	bot: TelegramBotClient,
 	profiles: readonly SearchProfile[],
 ): Promise<void> {
 	const text = event.message.text?.trim();
@@ -88,11 +70,19 @@ async function processMessage(
 	}
 	const sourceSettings = db.getSourceSettings();
 	if (!isAllowedSource(chatId, sourceSettings)) {
-		logEvent("debug", "message.skipped", { reason: "source_filter", chatId, messageId: event.message.id });
+		logEvent("debug", "message.skipped", {
+			reason: "source_filter",
+			chatId,
+			messageId: event.message.id,
+		});
 		return;
 	}
 	if (sourceSettings.paused) {
-		logEvent("debug", "message.skipped", { reason: "notifications_paused", chatId, messageId: event.message.id });
+		logEvent("debug", "message.skipped", {
+			reason: "notifications_paused",
+			chatId,
+			messageId: event.message.id,
+		});
 		return;
 	}
 
@@ -120,78 +110,32 @@ async function processMessage(
 		return;
 	}
 
-	const notification = formatNotification(vacancy);
-
-	try {
-		await bot.sendNotification(notification);
-	} catch (error) {
-		logEvent("warn", "vacancy.delivery_failed", {
-			source: context.sourceTitle,
-			chatId: context.chatId,
-			messageId: event.message.id,
-			profileId: vacancy.profileId,
-			delivery: "not_sent",
-			errorKind: error instanceof BotApiError ? "bot_api" : "unknown",
-			statusCode: error instanceof BotApiError ? error.statusCode : undefined,
-			errorMessage: error instanceof BotApiError ? error.message : undefined,
-		});
-		throw error;
-	}
-
-	db.markProcessed(context.chatId, event.message.id);
-	logEvent("info", "vacancy.delivered", {
+	db.enqueueDelivery(
+		context.chatId,
+		event.message.id,
+		vacancy.profileId,
+		formatNotification(vacancy),
+	);
+	logEvent("info", "vacancy.queued", {
 		source: context.sourceTitle,
 		chatId: context.chatId,
 		messageId: event.message.id,
 		profileId: vacancy.profileId,
-		delivery: "sent",
 	});
 }
 
 async function handleNewMessage(
 	event: NewMessageEvent,
-	bot: TelegramBotClient,
 	profiles: readonly SearchProfile[],
 ): Promise<void> {
-	while (!shuttingDown) {
-		try {
-			await waitForFloodPause();
-			await processMessage(event, bot, profiles);
-			return;
-		} catch (error) {
-			const retryAfterSeconds = isFloodWaitError(error)
-				? error.seconds
-				: error instanceof BotApiError
-					? error.retryAfterSeconds
-					: undefined;
-
-			if (!retryAfterSeconds) {
-				logEvent("error", "message.processing_failed", {
-					chatId: event.chatId?.toString(),
-					messageId: event.message.id,
-					errorKind: isFloodWaitError(error)
-						? "flood_wait"
-						: error instanceof BotApiError
-							? "bot_api"
-							: "unknown",
-					statusCode:
-						error instanceof BotApiError ? error.statusCode : undefined,
-					errorMessage:
-						error instanceof BotApiError ? error.message : undefined,
-				});
-				return;
-			}
-
-			const delayMilliseconds = Math.max(1, retryAfterSeconds) * 1_000;
-			floodWaitUntil = Math.max(floodWaitUntil, Date.now() + delayMilliseconds);
-			logEvent("warn", "telegram.retry_scheduled", {
-				chatId: event.chatId?.toString(),
-				messageId: event.message.id,
-				retryAfterSeconds,
-				errorKind: isFloodWaitError(error) ? "flood_wait" : "bot_api",
-			});
-			await waitForFloodPause();
-		}
+	try {
+		await processMessage(event, profiles);
+	} catch (error) {
+		logEvent("error", "message.processing_failed", {
+			chatId: event.chatId?.toString(),
+			messageId: event.message.id,
+			errorKind: error instanceof Error ? error.name : "unknown",
+		});
 	}
 }
 
@@ -205,8 +149,14 @@ export async function startApplication(): Promise<void> {
 		environment.telegramBotChatId,
 	);
 	const botIdentity = await bot.getMe();
-	const commandRouter = new BotCommandRouter(bot, db, environment.telegramBotChatId, profileStore);
+	const commandRouter = new BotCommandRouter(
+		bot,
+		db,
+		environment.telegramBotChatId,
+		profileStore,
+	);
 	const updateProcessor = new BotUpdateProcessor(bot, commandRouter, db);
+	const deliveryProcessor = new DeliveryOutboxProcessor(bot, db);
 
 	const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
 		if (shuttingDown) {
@@ -216,6 +166,7 @@ export async function startApplication(): Promise<void> {
 		shuttingDown = true;
 		logEvent("info", "application.shutting_down", { signal });
 		await updateProcessor.stop();
+		deliveryProcessor.stop();
 		await client.disconnect();
 		db.close();
 	};
@@ -224,7 +175,7 @@ export async function startApplication(): Promise<void> {
 	process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 	client.addEventHandler(
-		(event) => void handleNewMessage(event, bot, profileStore.get()),
+		(event) => void handleNewMessage(event, profileStore.get()),
 		new NewMessage({ incoming: true, func: isVacancySource }),
 	);
 	await client.connect();
@@ -237,11 +188,13 @@ export async function startApplication(): Promise<void> {
 		);
 	}
 	updateProcessor.start();
+	deliveryProcessor.start();
 
 	logEvent("info", "application.started", {
 		bot: botIdentity.username || String(botIdentity.id),
 		profileCount: profileStore.get().length,
-		enabledProfileCount: profileStore.get().filter((profile) => profile.enabled).length,
+		enabledProfileCount: profileStore.get().filter((profile) => profile.enabled)
+			.length,
 		sourceScope: "groups_and_channels",
 	});
 }

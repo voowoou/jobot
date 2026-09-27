@@ -40,6 +40,15 @@ interface SourceRow {
 	title: string | null;
 }
 
+export interface DeliveryTask {
+	id: number;
+	chatId: string;
+	messageId: number;
+	profileId: string;
+	notification: string;
+	attempts: number;
+}
+
 export class DeduplicationStorage {
 	private readonly database: Database.Database;
 
@@ -58,6 +67,12 @@ export class DeduplicationStorage {
 	private readonly removeSource;
 	private readonly findPaused;
 	private readonly writePaused;
+	private readonly enqueueOutbox;
+	private readonly findDueOutbox;
+	private readonly deleteOutbox;
+	private readonly rescheduleOutbox;
+	private readonly countOutbox;
+	private readonly markDeliveredTransaction;
 
 	public constructor(databasePath = DEFAULT_DATABASE_PATH) {
 		mkdirSync(dirname(databasePath), { recursive: true });
@@ -89,6 +104,17 @@ export class DeduplicationStorage {
       CREATE TABLE IF NOT EXISTS source_chats (
         chat_id TEXT PRIMARY KEY,
         title TEXT
+      );
+      CREATE TABLE IF NOT EXISTS delivery_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL,
+        message_id INTEGER NOT NULL,
+        profile_id TEXT NOT NULL,
+        notification TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at INTEGER NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(chat_id, message_id, profile_id)
       );
     `);
 
@@ -151,6 +177,12 @@ export class DeduplicationStorage {
 		this.writePaused = this.database.prepare<[number]>(
 			`INSERT INTO source_settings (id, paused) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET paused = excluded.paused`,
 		);
+		this.enqueueOutbox = this.database.prepare<[string, number, string, string, number]>(`INSERT OR IGNORE INTO delivery_outbox (chat_id, message_id, profile_id, notification, next_attempt_at) VALUES (?, ?, ?, ?, ?)`);
+		this.findDueOutbox = this.database.prepare<[number], { id: number; chat_id: string; message_id: number; profile_id: string; notification: string; attempts: number }>(`SELECT id, chat_id, message_id, profile_id, notification, attempts FROM delivery_outbox WHERE next_attempt_at <= ? ORDER BY id LIMIT 20`);
+		this.deleteOutbox = this.database.prepare<[number]>(`DELETE FROM delivery_outbox WHERE id = ?`);
+		this.rescheduleOutbox = this.database.prepare<[number, number]>(`UPDATE delivery_outbox SET attempts = attempts + 1, next_attempt_at = ? WHERE id = ?`);
+		this.countOutbox = this.database.prepare<[], { count: number }>(`SELECT count(*) AS count FROM delivery_outbox`);
+		this.markDeliveredTransaction = this.database.transaction((taskId: number, chatId: string, messageId: number) => { this.insertProcessed.run(chatId, messageId); this.deleteOutbox.run(taskId); });
 
 		this.cleanupExpired();
 	}
@@ -226,6 +258,16 @@ export class DeduplicationStorage {
 	public setNotificationsPaused(paused: boolean): void {
 		this.writePaused.run(paused ? 1 : 0);
 	}
+
+	public enqueueDelivery(chatId: string, messageId: number, profileId: string, notification: string): void {
+		this.enqueueOutbox.run(chatId, messageId, profileId, notification, Date.now());
+	}
+	public getDueDeliveries(): DeliveryTask[] {
+		return this.findDueOutbox.all(Date.now()).map((task) => ({ id: task.id, chatId: task.chat_id, messageId: task.message_id, profileId: task.profile_id, notification: task.notification, attempts: task.attempts }));
+	}
+	public markDeliverySucceeded(task: DeliveryTask): void { this.markDeliveredTransaction(task.id, task.chatId, task.messageId); this.cleanupExpired(); }
+	public rescheduleDelivery(task: DeliveryTask, nextAttemptAt: number): void { this.rescheduleOutbox.run(nextAttemptAt, task.id); }
+	public getOutboxCount(): number { return this.countOutbox.get()?.count ?? 0; }
 
 	public close(): void {
 		if (this.database.open) {

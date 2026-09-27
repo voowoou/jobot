@@ -14,6 +14,7 @@ const sourceControls = {
 	addSourceChat: () => undefined,
 	removeSourceChat: () => false,
 	setNotificationsPaused: () => undefined,
+	getOutboxCount: () => 0,
 };
 
 test("parses bot commands and compares owner IDs as strings", () => {
