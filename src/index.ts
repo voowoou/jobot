@@ -7,6 +7,7 @@ import { loadEnvironment } from "./config/env.js";
 import { ProfileStore } from "./config/profile-store.js";
 import { db } from "./db/index.js";
 import { DeliveryOutboxProcessor } from "./services/delivery-outbox.js";
+import { vacancyFingerprint } from "./services/fingerprint.js";
 import { formatNotification } from "./services/formatter.js";
 import { configureLogger, logEvent } from "./services/logger.js";
 import { matchVacancy } from "./services/matcher.js";
@@ -58,6 +59,7 @@ async function processMessage(
 	event: NewMessageEvent,
 	profiles: readonly SearchProfile[],
 ): Promise<void> {
+	db.incrementCounter("received");
 	const text = event.message.text?.trim();
 
 	if (!text) {
@@ -70,6 +72,7 @@ async function processMessage(
 	}
 	const sourceSettings = db.getSourceSettings();
 	if (!isAllowedSource(chatId, sourceSettings)) {
+		db.incrementCounter("filtered");
 		logEvent("debug", "message.skipped", {
 			reason: "source_filter",
 			chatId,
@@ -78,6 +81,7 @@ async function processMessage(
 		return;
 	}
 	if (sourceSettings.paused) {
+		db.incrementCounter("filtered");
 		logEvent("debug", "message.skipped", {
 			reason: "notifications_paused",
 			chatId,
@@ -101,6 +105,7 @@ async function processMessage(
 	const vacancy = matchVacancy(text, profiles, context);
 
 	if (!vacancy) {
+		db.incrementCounter("unmatched");
 		logEvent("debug", "message.skipped", {
 			reason: "no_profile_match",
 			source: context.sourceTitle,
@@ -109,6 +114,13 @@ async function processMessage(
 		});
 		return;
 	}
+	db.incrementCounter("matched");
+	const fingerprint = vacancyFingerprint(text);
+	if (db.isCrossChannelDedupEnabled() && db.hasFingerprint(fingerprint)) {
+		db.incrementCounter("cross_channel_deduplicated");
+		return;
+	}
+	if (db.isCrossChannelDedupEnabled()) db.saveFingerprint(fingerprint);
 
 	db.enqueueDelivery(
 		context.chatId,
@@ -142,6 +154,9 @@ async function handleNewMessage(
 export async function startApplication(): Promise<void> {
 	const environment = loadEnvironment();
 	configureLogger(environment.logLevel);
+	if (process.env.CROSS_CHANNEL_DEDUP_ENABLED !== undefined) {
+		db.setCrossChannelDedupEnabled(process.env.CROSS_CHANNEL_DEDUP_ENABLED === "true");
+	}
 	const profileStore = new ProfileStore();
 	const client = createTelegramClient(environment);
 	const bot = new TelegramBotClient(

@@ -73,6 +73,12 @@ export class DeduplicationStorage {
 	private readonly rescheduleOutbox;
 	private readonly countOutbox;
 	private readonly markDeliveredTransaction;
+	private readonly incrementCounterStatement;
+	private readonly readCounters;
+	private readonly getFingerprintFlag;
+	private readonly setFingerprintFlagStatement;
+	private readonly findFingerprint;
+	private readonly insertFingerprint;
 
 	public constructor(databasePath = DEFAULT_DATABASE_PATH) {
 		mkdirSync(dirname(databasePath), { recursive: true });
@@ -116,6 +122,9 @@ export class DeduplicationStorage {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(chat_id, message_id, profile_id)
       );
+      CREATE TABLE IF NOT EXISTS app_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS delivery_settings (id INTEGER PRIMARY KEY CHECK (id = 1), cross_channel_dedup INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS message_fingerprints (fingerprint TEXT PRIMARY KEY, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
     `);
 
 		this.findProcessed = this.database.prepare<
@@ -183,6 +192,12 @@ export class DeduplicationStorage {
 		this.rescheduleOutbox = this.database.prepare<[number, number]>(`UPDATE delivery_outbox SET attempts = attempts + 1, next_attempt_at = ? WHERE id = ?`);
 		this.countOutbox = this.database.prepare<[], { count: number }>(`SELECT count(*) AS count FROM delivery_outbox`);
 		this.markDeliveredTransaction = this.database.transaction((taskId: number, chatId: string, messageId: number) => { this.insertProcessed.run(chatId, messageId); this.deleteOutbox.run(taskId); });
+		this.incrementCounterStatement = this.database.prepare<[string]>(`INSERT INTO app_counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1`);
+		this.readCounters = this.database.prepare<[], { name: string; value: number }>(`SELECT name, value FROM app_counters`);
+		this.getFingerprintFlag = this.database.prepare<[], { enabled: number }>(`SELECT cross_channel_dedup AS enabled FROM delivery_settings WHERE id = 1`);
+		this.setFingerprintFlagStatement = this.database.prepare<[number]>(`INSERT INTO delivery_settings (id, cross_channel_dedup) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET cross_channel_dedup = excluded.cross_channel_dedup`);
+		this.findFingerprint = this.database.prepare<[string], { fingerprint: string }>(`SELECT fingerprint FROM message_fingerprints WHERE fingerprint = ?`);
+		this.insertFingerprint = this.database.prepare<[string]>(`INSERT OR IGNORE INTO message_fingerprints (fingerprint) VALUES (?)`);
 
 		this.cleanupExpired();
 	}
@@ -268,6 +283,12 @@ export class DeduplicationStorage {
 	public markDeliverySucceeded(task: DeliveryTask): void { this.markDeliveredTransaction(task.id, task.chatId, task.messageId); this.cleanupExpired(); }
 	public rescheduleDelivery(task: DeliveryTask, nextAttemptAt: number): void { this.rescheduleOutbox.run(nextAttemptAt, task.id); }
 	public getOutboxCount(): number { return this.countOutbox.get()?.count ?? 0; }
+	public incrementCounter(name: string): void { this.incrementCounterStatement.run(name); }
+	public getCounters(): Record<string, number> { return Object.fromEntries(this.readCounters.all().map((row) => [row.name, row.value])); }
+	public isCrossChannelDedupEnabled(): boolean { return this.getFingerprintFlag.get()?.enabled === 1; }
+	public setCrossChannelDedupEnabled(enabled: boolean): void { this.setFingerprintFlagStatement.run(enabled ? 1 : 0); }
+	public hasFingerprint(fingerprint: string): boolean { return this.findFingerprint.get(fingerprint) !== undefined; }
+	public saveFingerprint(fingerprint: string): void { this.insertFingerprint.run(fingerprint); }
 
 	public close(): void {
 		if (this.database.open) {

@@ -13,7 +13,7 @@ export function retryDelay(task: DeliveryTask, error: unknown): number {
 export class DeliveryOutboxProcessor {
 	private timer: NodeJS.Timeout | undefined;
 	private running = false;
-	public constructor(private readonly bot: Pick<TelegramBotClient, "sendNotification">, private readonly storage: Pick<DeduplicationStorage, "getDueDeliveries" | "markDeliverySucceeded" | "rescheduleDelivery" | "getOutboxCount">) {}
+	public constructor(private readonly bot: Pick<TelegramBotClient, "sendNotification">, private readonly storage: Pick<DeduplicationStorage, "getDueDeliveries" | "markDeliverySucceeded" | "rescheduleDelivery" | "getOutboxCount" | "incrementCounter">) {}
 	public start(): void { if (!this.timer) { void this.processDue(); this.timer = setInterval(() => void this.processDue(), 5_000); } }
 	public stop(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
 	public async processDue(): Promise<void> {
@@ -25,10 +25,12 @@ export class DeliveryOutboxProcessor {
 		try {
 			await this.bot.sendNotification(task.notification);
 			this.storage.markDeliverySucceeded(task);
+			this.storage.incrementCounter("delivered");
 			logEvent("info", "vacancy.delivered", { chatId: task.chatId, messageId: task.messageId, profileId: task.profileId, delivery: "sent" });
 		} catch (error) {
-			if (task.attempts + 1 >= MAX_ATTEMPTS) { this.storage.rescheduleDelivery(task, Number.MAX_SAFE_INTEGER); logEvent("error", "vacancy.delivery_failed", { chatId: task.chatId, messageId: task.messageId, profileId: task.profileId, delivery: "final_failure", errorKind: error instanceof BotApiError ? "bot_api" : "unknown" }); return; }
+			if (task.attempts + 1 >= MAX_ATTEMPTS) { this.storage.rescheduleDelivery(task, Number.MAX_SAFE_INTEGER); this.storage.incrementCounter("delivery_failed"); logEvent("error", "vacancy.delivery_failed", { chatId: task.chatId, messageId: task.messageId, profileId: task.profileId, delivery: "final_failure", errorKind: error instanceof BotApiError ? "bot_api" : "unknown" }); return; }
 			const delay = retryDelay(task, error); this.storage.rescheduleDelivery(task, Date.now() + delay);
+			this.storage.incrementCounter("delivery_retry");
 			logEvent("warn", "vacancy.delivery_retry_scheduled", { chatId: task.chatId, messageId: task.messageId, profileId: task.profileId, retryAfterMilliseconds: delay });
 		}
 	}

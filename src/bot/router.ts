@@ -11,7 +11,7 @@ export interface CommandReplyClient {
 }
 type DialogStorage = Pick<
 	DeduplicationStorage,
-	"clearBotDialog" | "getBotDialog" | "saveBotDialog" | "getSourceSettings" | "listSourceChats" | "setSourceMode" | "addSourceChat" | "removeSourceChat" | "setNotificationsPaused" | "getOutboxCount"
+	"clearBotDialog" | "getBotDialog" | "saveBotDialog" | "getSourceSettings" | "listSourceChats" | "setSourceMode" | "addSourceChat" | "removeSourceChat" | "setNotificationsPaused" | "getOutboxCount" | "getCounters"
 >;
 type Draft = {
 	mode: "create" | "edit" | "delete";
@@ -147,7 +147,8 @@ export class BotCommandRouter {
 	}
 	private statusText(): string {
 		const settings = this.storage.getSourceSettings(); const active = this.profiles?.get().filter((profile) => profile.enabled).length ?? 0;
-		return `Уведомления: ${settings.paused ? "пауза" : "включены"}\nПрофилей активно: ${active}\nРежим источников: ${settings.mode}\nОжидают доставки: ${this.storage.getOutboxCount()}`;
+		const counters = this.storage.getCounters();
+		return `Уведомления: ${settings.paused ? "пауза" : "включены"}\nПрофилей активно: ${active}\nРежим источников: ${settings.mode}\nПолучено: ${counters.received ?? 0}\nСовпало: ${counters.matched ?? 0}\nДоставлено: ${counters.delivered ?? 0}\nRetry: ${counters.delivery_retry ?? 0}\nОжидают доставки: ${this.storage.getOutboxCount()}`;
 	}
 	private async profilesCommand(message: CommandMessage): Promise<void> {
 		const profileStore = this.profiles;
