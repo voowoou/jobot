@@ -72,8 +72,9 @@ export class TelegramBotClient {
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(parameters),
       });
-    } catch (error) {
-      throw new BotApiError(`Bot API network error while calling ${method}: ${String(error)}`);
+    } catch {
+      // Do not include the underlying fetch error: it may contain the request URL and bot token.
+      throw new BotApiError(`Bot API network error while calling ${method}`);
     }
 
     let payload: BotApiResponse<T>;

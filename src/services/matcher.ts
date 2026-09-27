@@ -1,4 +1,3 @@
-import { SEARCH_PROFILES } from "../config/profiles.js";
 import type { ParsedVacancy, SearchProfile } from "../types/index.js";
 
 export interface MatchContext {
@@ -51,14 +50,18 @@ function parseVacancy(profile: SearchProfile, text: string, context: MatchContex
   };
 }
 
-export function matchVacancy(text: string, context: MatchContext = {}): ParsedVacancy | null {
+export function matchVacancy(
+  text: string,
+  profiles: readonly SearchProfile[],
+  context: MatchContext = {},
+): ParsedVacancy | null {
   const normalizedText = text.trim();
 
   if (!normalizedText) {
     return null;
   }
 
-  const profile = SEARCH_PROFILES.find(
+  const profile = profiles.find(
     (candidate) => candidate.enabled && matchesProfile(normalizedText, candidate),
   );
 
