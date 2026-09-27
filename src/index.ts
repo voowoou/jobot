@@ -5,7 +5,7 @@ import { BotApiError, TelegramBotClient } from "./bot/client.js";
 import { BotCommandRouter } from "./bot/router.js";
 import { BotUpdateProcessor } from "./bot/updates.js";
 import { loadEnvironment } from "./config/env.js";
-import { loadSearchProfiles } from "./config/profile-config.js";
+import { ProfileStore } from "./config/profile-store.js";
 import { db } from "./db/index.js";
 import { formatNotification } from "./services/formatter.js";
 import { configureLogger, logEvent } from "./services/logger.js";
@@ -184,14 +184,14 @@ async function handleNewMessage(
 export async function startApplication(): Promise<void> {
 	const environment = loadEnvironment();
 	configureLogger(environment.logLevel);
-	const profiles = loadSearchProfiles();
+	const profileStore = new ProfileStore();
 	const client = createTelegramClient(environment);
 	const bot = new TelegramBotClient(
 		environment.telegramBotToken,
 		environment.telegramBotChatId,
 	);
 	const botIdentity = await bot.getMe();
-	const commandRouter = new BotCommandRouter(bot, db, environment.telegramBotChatId);
+	const commandRouter = new BotCommandRouter(bot, db, environment.telegramBotChatId, profileStore);
 	const updateProcessor = new BotUpdateProcessor(bot, commandRouter, db);
 
 	const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
@@ -210,7 +210,7 @@ export async function startApplication(): Promise<void> {
 	process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 	client.addEventHandler(
-		(event) => void handleNewMessage(event, bot, profiles),
+		(event) => void handleNewMessage(event, bot, profileStore.get()),
 		new NewMessage({ incoming: true, func: isVacancySource }),
 	);
 	await client.connect();
@@ -226,8 +226,8 @@ export async function startApplication(): Promise<void> {
 
 	logEvent("info", "application.started", {
 		bot: botIdentity.username || String(botIdentity.id),
-		profileCount: profiles.length,
-		enabledProfileCount: profiles.filter((profile) => profile.enabled).length,
+		profileCount: profileStore.get().length,
+		enabledProfileCount: profileStore.get().filter((profile) => profile.enabled).length,
 		sourceScope: "groups_and_channels",
 	});
 }
