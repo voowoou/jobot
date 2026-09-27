@@ -1,12 +1,12 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 
 import { DEFAULT_SEARCH_PROFILES } from "./profiles.js";
 import type { ProfileConfig, SearchProfile, UserProfile } from "../types/index.js";
 
-const DEFAULT_PROFILE_CONFIG_PATH = resolve(process.cwd(), "data", "profiles.yaml");
+export const PROFILE_CONFIG_PATH = resolve(process.cwd(), "data", "profiles.yaml");
 const WORD_EDGE = "[^\\p{L}\\p{N}_]";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -147,21 +147,21 @@ export function compileUserProfile(profile: UserProfile): SearchProfile {
   };
 }
 
-export function loadSearchProfiles(profilePath = DEFAULT_PROFILE_CONFIG_PATH): SearchProfile[] {
+export function readUserProfileConfig(profilePath = PROFILE_CONFIG_PATH): ProfileConfig | undefined {
   let rawConfig: string;
 
   try {
     rawConfig = readFileSync(profilePath, "utf8");
   } catch (error: unknown) {
     if (isRecord(error) && error.code === "ENOENT") {
-      return DEFAULT_SEARCH_PROFILES;
+      return undefined;
     }
 
     throw error;
   }
 
   if (!rawConfig.trim()) {
-    return DEFAULT_SEARCH_PROFILES;
+    return { profiles: [] };
   }
 
   let parsed: unknown;
@@ -172,6 +172,22 @@ export function loadSearchProfiles(profilePath = DEFAULT_PROFILE_CONFIG_PATH): S
     throw new Error(`Unable to parse profile configuration at ${profilePath}: ${message}`);
   }
 
-  const config = validateProfileConfig(parsed);
-  return config.profiles.length === 0 ? DEFAULT_SEARCH_PROFILES : config.profiles.map(compileUserProfile);
+  return validateProfileConfig(parsed);
+}
+
+export function writeUserProfileConfig(config: ProfileConfig, profilePath = PROFILE_CONFIG_PATH): void {
+  const validated = validateProfileConfig(config);
+  const directory = dirname(profilePath);
+  const temporaryPath = `${profilePath}.${process.pid}.${Date.now()}.tmp`;
+
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(temporaryPath, stringify(validated), "utf8");
+  renameSync(temporaryPath, profilePath);
+}
+
+export function loadSearchProfiles(profilePath = PROFILE_CONFIG_PATH): SearchProfile[] {
+  const config = readUserProfileConfig(profilePath);
+  return !config || config.profiles.length === 0
+    ? DEFAULT_SEARCH_PROFILES
+    : config.profiles.map(compileUserProfile);
 }

@@ -6,6 +6,11 @@
   "scripts": {
     "auth": "tsx src/telegram/auth.ts",
     "bot:setup": "tsx src/bot/setup.ts",
+    "profiles:list": "tsx src/profiles/cli.ts list",
+    "profiles:add": "tsx src/profiles/cli.ts add",
+    "profiles:edit": "tsx src/profiles/cli.ts edit",
+    "profiles:remove": "tsx src/profiles/cli.ts remove",
+    "profiles:validate": "tsx src/profiles/cli.ts validate",
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"
