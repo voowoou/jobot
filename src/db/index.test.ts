@@ -45,3 +45,19 @@ test("persists bot update cursor and dialog state", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("persists source settings and notification pause", () => {
+  const directory = mkdtempSync(join(tmpdir(), "jobot-db-"));
+  const storage = new DeduplicationStorage(join(directory, "app.db"));
+  try {
+    assert.deepEqual(storage.getSourceSettings(), { mode: "all", chatIds: [], paused: false });
+    storage.setSourceMode("allowlist");
+    storage.addSourceChat("-10042", "Jobs");
+    storage.setNotificationsPaused(true);
+    assert.deepEqual(storage.getSourceSettings(), { mode: "allowlist", chatIds: ["-10042"], paused: true });
+    assert.equal(storage.removeSourceChat("-10042"), true);
+  } finally {
+    storage.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

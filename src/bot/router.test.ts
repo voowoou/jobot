@@ -7,6 +7,15 @@ import { ProfileStore } from "../config/profile-store.js";
 import type { BotDialogState } from "../db/index.js";
 import { BotCommandRouter, isOwner, parseCommand } from "./router.js";
 
+const sourceControls = {
+	getSourceSettings: () => ({ mode: "all" as const, chatIds: [], paused: false }),
+	listSourceChats: () => [],
+	setSourceMode: () => undefined,
+	addSourceChat: () => undefined,
+	removeSourceChat: () => false,
+	setNotificationsPaused: () => undefined,
+};
+
 test("parses bot commands and compares owner IDs as strings", () => {
 	assert.equal(parseCommand(" /START@jobot hello"), "start");
 	assert.equal(parseCommand("plain text"), undefined);
@@ -19,11 +28,13 @@ test("router denies non-owner and cancels only the owner's active dialog", async
 	const cleared: string[] = [];
 	const router = new BotCommandRouter(
 		{
+			...sourceControls,
 			sendText: async (chatId, text) => {
 				replies.push({ chatId, text });
 			},
 		},
 		{
+			...sourceControls,
 			clearBotDialog: (chatId) => {
 				cleared.push(chatId);
 				return true;
@@ -47,11 +58,13 @@ test("start gives setup guidance only while owner is unconfigured", async () => 
 	const replies: string[] = [];
 	const router = new BotCommandRouter(
 		{
+			...sourceControls,
 			sendText: async (_chatId, text) => {
 				replies.push(text);
 			},
 		},
 		{
+			...sourceControls,
 			clearBotDialog: () => false,
 			getBotDialog: () => undefined,
 			saveBotDialog: () => undefined,
@@ -73,6 +86,7 @@ test("creates, cancels, rejects duplicate IDs, and deletes profiles through the 
 			},
 		},
 		{
+			...sourceControls,
 			getBotDialog: () => dialog,
 			clearBotDialog: () => {
 				const exists = dialog !== undefined;

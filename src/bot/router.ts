@@ -11,7 +11,7 @@ export interface CommandReplyClient {
 }
 type DialogStorage = Pick<
 	DeduplicationStorage,
-	"clearBotDialog" | "getBotDialog" | "saveBotDialog"
+	"clearBotDialog" | "getBotDialog" | "saveBotDialog" | "getSourceSettings" | "listSourceChats" | "setSourceMode" | "addSourceChat" | "removeSourceChat" | "setNotificationsPaused"
 >;
 type Draft = {
 	mode: "create" | "edit" | "delete";
@@ -32,7 +32,7 @@ const steps = [
 ] as const;
 type Step = (typeof steps)[number];
 const HELP =
-	"Команды:\n/start — приветствие\n/help — справка\n/profiles — список профилей\n/profiles add — создать профиль\n/profiles edit <id> — изменить профиль\n/profiles toggle <id> — включить/выключить\n/profiles remove <id> — удалить профиль\n/cancel — отменить текущую операцию";
+	"Команды:\n/start — приветствие\n/help — справка\n/profiles — профили\n/sources — источники\n/pause — приостановить уведомления\n/resume — продолжить уведомления\n/status — состояние\n/test — тестовая карточка\n/cancel — отменить текущую операцию";
 
 export function isOwner(
 	chatId: string,
@@ -121,11 +121,33 @@ export class BotCommandRouter {
 					: "Нет активной операции для отмены.",
 			));
 		if (command === "profiles") return this.profilesCommand(message);
+		if (command === "sources") return this.sourcesCommand(message);
+		if (command === "pause") { this.storage.setNotificationsPaused(true); return void await this.client.sendText(message.chatId, "Уведомления приостановлены. Новые сообщения не будут помечены обработанными."); }
+		if (command === "resume") { this.storage.setNotificationsPaused(false); return void await this.client.sendText(message.chatId, "Уведомления возобновлены."); }
+		if (command === "status") return void await this.client.sendText(message.chatId, this.statusText());
+		if (command === "test") return void await this.client.sendText(message.chatId, "🎯 Тестовая карточка Jobot\nИсточник: тестовый канал\nФормат: remote\nПрофиль: Frontend");
 		if (!command) return this.wizard(message);
 		await this.client.sendText(
 			message.chatId,
 			"Неизвестная команда. Используйте /help.",
 		);
+	}
+	private async sourcesCommand(message: CommandMessage): Promise<void> {
+		const [, action, chatId, ...titleParts] = message.text.trim().split(/\s+/);
+		if (!action) return void await this.client.sendText(message.chatId, this.sourcesText());
+		if (action === "mode" && (chatId === "all" || chatId === "allowlist" || chatId === "denylist")) { this.storage.setSourceMode(chatId); return void await this.client.sendText(message.chatId, `Режим источников: ${chatId}.`); }
+		if ((action === "add" || action === "remove") && (!chatId || !/^-\d+$/.test(chatId))) return void await this.client.sendText(message.chatId, "Укажите отрицательный ID группы, супергруппы или канала. Личные диалоги добавлять нельзя.");
+		if (action === "add" && chatId) { this.storage.addSourceChat(chatId, titleParts.join(" ") || undefined); return void await this.client.sendText(message.chatId, `Источник ${chatId} добавлен.`); }
+		if (action === "remove" && chatId) return void await this.client.sendText(message.chatId, this.storage.removeSourceChat(chatId) ? `Источник ${chatId} удалён.` : `Источника ${chatId} нет в списке.`);
+		await this.client.sendText(message.chatId, "Используйте /sources, /sources mode <all|allowlist|denylist>, /sources add <chat_id> или /sources remove <chat_id>.");
+	}
+	private sourcesText(): string {
+		const settings = this.storage.getSourceSettings(); const chats = this.storage.listSourceChats();
+		return `Режим: ${settings.mode}\nВыбранные источники:\n${chats.length ? chats.map((chat) => `${chat.chat_id}${chat.title ? ` — ${chat.title}` : ""}`).join("\n") : "—"}`;
+	}
+	private statusText(): string {
+		const settings = this.storage.getSourceSettings(); const active = this.profiles?.get().filter((profile) => profile.enabled).length ?? 0;
+		return `Уведомления: ${settings.paused ? "пауза" : "включены"}\nПрофилей активно: ${active}\nРежим источников: ${settings.mode}`;
 	}
 	private async profilesCommand(message: CommandMessage): Promise<void> {
 		const profileStore = this.profiles;

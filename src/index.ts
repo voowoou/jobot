@@ -11,7 +11,7 @@ import { formatNotification } from "./services/formatter.js";
 import { configureLogger, logEvent } from "./services/logger.js";
 import { matchVacancy } from "./services/matcher.js";
 import { createTelegramClient } from "./telegram/client.js";
-import { isVacancySource } from "./telegram/source-filter.js";
+import { isAllowedSource, isVacancySource } from "./telegram/source-filter.js";
 import type { SearchProfile } from "./types/index.js";
 
 let floodWaitUntil = 0;
@@ -79,6 +79,20 @@ async function processMessage(
 	const text = event.message.text?.trim();
 
 	if (!text) {
+		return;
+	}
+
+	const chatId = event.chatId?.toString();
+	if (!chatId) {
+		throw new Error("Unable to determine the source chat ID");
+	}
+	const sourceSettings = db.getSourceSettings();
+	if (!isAllowedSource(chatId, sourceSettings)) {
+		logEvent("debug", "message.skipped", { reason: "source_filter", chatId, messageId: event.message.id });
+		return;
+	}
+	if (sourceSettings.paused) {
+		logEvent("debug", "message.skipped", { reason: "notifications_paused", chatId, messageId: event.message.id });
 		return;
 	}
 
