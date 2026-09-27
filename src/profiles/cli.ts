@@ -210,8 +210,8 @@ function validateProfiles(): void {
   console.log(`Конфигурация корректна: ${config.profiles.length} профилей.`);
 }
 
-async function main(): Promise<void> {
-  switch (process.argv[2]) {
+export async function runProfileCli(args = process.argv.slice(2)): Promise<void> {
+  switch (args[0]) {
     case "list":
       await listProfiles();
       break;
@@ -232,7 +232,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1]?.replace(/\\/g, "/").endsWith("/profiles/cli.ts")) {
+  runProfileCli().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}
