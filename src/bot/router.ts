@@ -1,5 +1,6 @@
 import type { ProfileStore } from "../config/profile-store.js";
 import type { BotDialogState, DeduplicationStorage } from "../db/index.js";
+import { formatNotification } from "../services/formatter.js";
 import type { UserProfile } from "../types/index.js";
 
 export interface CommandMessage {
@@ -8,10 +9,21 @@ export interface CommandMessage {
 }
 export interface CommandReplyClient {
 	sendText(chatId: string, text: string): Promise<void>;
+	sendNotification?(text: string): Promise<void>;
 }
 type DialogStorage = Pick<
 	DeduplicationStorage,
-	"clearBotDialog" | "getBotDialog" | "saveBotDialog" | "getSourceSettings" | "listSourceChats" | "setSourceMode" | "addSourceChat" | "removeSourceChat" | "setNotificationsPaused" | "getOutboxCount" | "getCounters"
+	| "clearBotDialog"
+	| "getBotDialog"
+	| "saveBotDialog"
+	| "getSourceSettings"
+	| "listSourceChats"
+	| "setSourceMode"
+	| "addSourceChat"
+	| "removeSourceChat"
+	| "setNotificationsPaused"
+	| "getOutboxCount"
+	| "getCounters"
 >;
 type Draft = {
 	mode: "create" | "edit" | "delete";
@@ -122,10 +134,40 @@ export class BotCommandRouter {
 			));
 		if (command === "profiles") return this.profilesCommand(message);
 		if (command === "sources") return this.sourcesCommand(message);
-		if (command === "pause") { this.storage.setNotificationsPaused(true); return void await this.client.sendText(message.chatId, "Уведомления приостановлены. Новые сообщения не будут помечены обработанными."); }
-		if (command === "resume") { this.storage.setNotificationsPaused(false); return void await this.client.sendText(message.chatId, "Уведомления возобновлены."); }
-		if (command === "status") return void await this.client.sendText(message.chatId, this.statusText());
-		if (command === "test") return void await this.client.sendText(message.chatId, "🎯 Тестовая карточка Jobot\nИсточник: тестовый канал\nФормат: remote\nПрофиль: Frontend");
+		if (command === "pause") {
+			this.storage.setNotificationsPaused(true);
+			return void (await this.client.sendText(
+				message.chatId,
+				"Уведомления приостановлены. Новые сообщения не будут помечены обработанными.",
+			));
+		}
+		if (command === "resume") {
+			this.storage.setNotificationsPaused(false);
+			return void (await this.client.sendText(
+				message.chatId,
+				"Уведомления возобновлены.",
+			));
+		}
+		if (command === "status")
+			return void (await this.client.sendText(
+				message.chatId,
+				this.statusText(),
+			));
+		if (command === "test") {
+			const card = formatNotification({
+				originalText: "Вакансия: ищем React middle разработчика, remote.",
+				profileId: "frontend",
+				profileTitle: "Frontend (React / JS)",
+				sourceTitle: "Тестовый канал",
+				grades: ["middle"],
+				workFormats: ["Удалёнка"],
+				matchedKeywords: ["React"],
+				directLink: "https://t.me/example/1",
+			});
+			if (this.client.sendNotification)
+				return this.client.sendNotification(card);
+			return void (await this.client.sendText(message.chatId, card));
+		}
 		if (!command) return this.wizard(message);
 		await this.client.sendText(
 			message.chatId,
@@ -134,19 +176,57 @@ export class BotCommandRouter {
 	}
 	private async sourcesCommand(message: CommandMessage): Promise<void> {
 		const [, action, chatId, ...titleParts] = message.text.trim().split(/\s+/);
-		if (!action) return void await this.client.sendText(message.chatId, this.sourcesText());
-		if (action === "mode" && (chatId === "all" || chatId === "allowlist" || chatId === "denylist")) { this.storage.setSourceMode(chatId); return void await this.client.sendText(message.chatId, `Режим источников: ${chatId}.`); }
-		if ((action === "add" || action === "remove") && (!chatId || !/^-\d+$/.test(chatId))) return void await this.client.sendText(message.chatId, "Укажите отрицательный ID группы, супергруппы или канала. Личные диалоги добавлять нельзя.");
-		if (action === "add" && chatId) { this.storage.addSourceChat(chatId, titleParts.join(" ") || undefined); return void await this.client.sendText(message.chatId, `Источник ${chatId} добавлен.`); }
-		if (action === "remove" && chatId) return void await this.client.sendText(message.chatId, this.storage.removeSourceChat(chatId) ? `Источник ${chatId} удалён.` : `Источника ${chatId} нет в списке.`);
-		await this.client.sendText(message.chatId, "Используйте /sources, /sources mode <all|allowlist|denylist>, /sources add <chat_id> или /sources remove <chat_id>.");
+		if (!action)
+			return void (await this.client.sendText(
+				message.chatId,
+				this.sourcesText(),
+			));
+		if (
+			action === "mode" &&
+			(chatId === "all" || chatId === "allowlist" || chatId === "denylist")
+		) {
+			this.storage.setSourceMode(chatId);
+			return void (await this.client.sendText(
+				message.chatId,
+				`Режим источников: ${chatId}.`,
+			));
+		}
+		if (
+			(action === "add" || action === "remove") &&
+			(!chatId || !/^-\d+$/.test(chatId))
+		)
+			return void (await this.client.sendText(
+				message.chatId,
+				"Укажите отрицательный ID группы, супергруппы или канала. Личные диалоги добавлять нельзя.",
+			));
+		if (action === "add" && chatId) {
+			this.storage.addSourceChat(chatId, titleParts.join(" ") || undefined);
+			return void (await this.client.sendText(
+				message.chatId,
+				`Источник ${chatId} добавлен.`,
+			));
+		}
+		if (action === "remove" && chatId)
+			return void (await this.client.sendText(
+				message.chatId,
+				this.storage.removeSourceChat(chatId)
+					? `Источник ${chatId} удалён.`
+					: `Источника ${chatId} нет в списке.`,
+			));
+		await this.client.sendText(
+			message.chatId,
+			"Используйте /sources, /sources mode <all|allowlist|denylist>, /sources add <chat_id> или /sources remove <chat_id>.",
+		);
 	}
 	private sourcesText(): string {
-		const settings = this.storage.getSourceSettings(); const chats = this.storage.listSourceChats();
+		const settings = this.storage.getSourceSettings();
+		const chats = this.storage.listSourceChats();
 		return `Режим: ${settings.mode}\nВыбранные источники:\n${chats.length ? chats.map((chat) => `${chat.chat_id}${chat.title ? ` — ${chat.title}` : ""}`).join("\n") : "—"}`;
 	}
 	private statusText(): string {
-		const settings = this.storage.getSourceSettings(); const active = this.profiles?.get().filter((profile) => profile.enabled).length ?? 0;
+		const settings = this.storage.getSourceSettings();
+		const active =
+			this.profiles?.get().filter((profile) => profile.enabled).length ?? 0;
 		const counters = this.storage.getCounters();
 		return `Уведомления: ${settings.paused ? "пауза" : "включены"}\nПрофилей активно: ${active}\nРежим источников: ${settings.mode}\nПолучено: ${counters.received ?? 0}\nСовпало: ${counters.matched ?? 0}\nДоставлено: ${counters.delivered ?? 0}\nRetry: ${counters.delivery_retry ?? 0}\nОжидают доставки: ${this.storage.getOutboxCount()}`;
 	}
