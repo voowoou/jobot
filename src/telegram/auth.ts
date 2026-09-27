@@ -2,11 +2,11 @@ import input from "input";
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 
-import { env } from "../config/env.js";
+import { telegramEnv } from "../config/env.js";
 
 async function authenticate(): Promise<void> {
   const session = new StringSession("");
-  const client = new TelegramClient(session, env.telegramApiId, env.telegramApiHash, {
+  const client = new TelegramClient(session, telegramEnv.telegramApiId, telegramEnv.telegramApiHash, {
     connectionRetries: Infinity,
   });
 

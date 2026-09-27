@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "auth": "tsx src/telegram/auth.ts",
+    "bot:setup": "tsx src/bot/setup.ts",
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"

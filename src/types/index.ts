@@ -29,9 +29,19 @@ export interface ParsedVacancy {
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-export interface AppEnvironment {
+export interface TelegramEnvironment {
   telegramApiId: number;
   telegramApiHash: string;
   telegramStringSession: string;
   logLevel: LogLevel;
+}
+
+export interface BotEnvironment {
+  telegramBotToken: string;
+  telegramBotChatId?: string;
+}
+
+export interface AppEnvironment extends TelegramEnvironment {
+  telegramBotToken: string;
+  telegramBotChatId: string;
 }

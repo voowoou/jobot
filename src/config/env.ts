@@ -1,10 +1,10 @@
 import "dotenv/config";
 
-import type { AppEnvironment, LogLevel } from "../types/index.js";
+import type { AppEnvironment, BotEnvironment, LogLevel, TelegramEnvironment } from "../types/index.js";
 
 const LOG_LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error"]);
 
-function requireEnv(name: "TELEGRAM_API_ID" | "TELEGRAM_API_HASH"): string {
+function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
 
   if (!value) {
@@ -34,7 +34,7 @@ function parseLogLevel(value: string | undefined): LogLevel {
   return level as LogLevel;
 }
 
-export function loadEnvironment(): AppEnvironment {
+export function loadTelegramEnvironment(): TelegramEnvironment {
   return {
     telegramApiId: parseApiId(requireEnv("TELEGRAM_API_ID")),
     telegramApiHash: requireEnv("TELEGRAM_API_HASH"),
@@ -43,4 +43,35 @@ export function loadEnvironment(): AppEnvironment {
   };
 }
 
-export const env = loadEnvironment();
+export function loadBotEnvironment(requireChatId = false): BotEnvironment {
+  const chatId = process.env.TELEGRAM_BOT_CHAT_ID?.trim();
+
+  if (requireChatId && !chatId) {
+    throw new Error("Missing required environment variable: TELEGRAM_BOT_CHAT_ID. Run `pnpm bot:setup`.");
+  }
+
+  if (chatId && !/^-?\d+$/.test(chatId)) {
+    throw new Error("TELEGRAM_BOT_CHAT_ID must be a numeric chat ID");
+  }
+
+  return {
+    telegramBotToken: requireEnv("TELEGRAM_BOT_TOKEN"),
+    telegramBotChatId: chatId,
+  };
+}
+
+export function loadEnvironment(): AppEnvironment {
+  const botEnvironment = loadBotEnvironment(true);
+
+  if (!botEnvironment.telegramBotChatId) {
+    throw new Error("Missing required environment variable: TELEGRAM_BOT_CHAT_ID");
+  }
+
+  return {
+    ...loadTelegramEnvironment(),
+    telegramBotToken: botEnvironment.telegramBotToken,
+    telegramBotChatId: botEnvironment.telegramBotChatId,
+  };
+}
+
+export const telegramEnv = loadTelegramEnvironment();

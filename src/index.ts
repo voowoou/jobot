@@ -2,6 +2,8 @@ import { FloodWaitError } from "telegram/errors/index.js";
 import { NewMessage, type NewMessageEvent } from "telegram/events/index.js";
 import { getDisplayName } from "telegram/Utils.js";
 
+import { loadEnvironment } from "./config/env.js";
+import { BotApiError, TelegramBotClient } from "./bot/client.js";
 import { db } from "./db/index.js";
 import { formatNotification } from "./services/formatter.js";
 import { matchVacancy } from "./services/matcher.js";
@@ -54,7 +56,7 @@ async function getMessageContext(event: NewMessageEvent): Promise<{
   };
 }
 
-async function processMessage(event: NewMessageEvent): Promise<void> {
+async function processMessage(event: NewMessageEvent, bot: TelegramBotClient): Promise<void> {
   const text = event.message.text?.trim();
 
   if (!text) {
@@ -75,41 +77,42 @@ async function processMessage(event: NewMessageEvent): Promise<void> {
 
   const notification = formatNotification(vacancy);
 
-  if (!event.client) {
-    throw new Error("Telegram client is not attached to the message event");
-  }
-
-  await event.client.sendMessage("me", {
-    message: notification,
-    parseMode: "markdownv2",
-    linkPreview: false,
-  });
+  await bot.sendNotification(notification);
   db.markProcessed(context.chatId, event.message.id);
   console.info(`Sent vacancy notification from ${context.sourceTitle}: ${event.message.id}`);
 }
 
-async function handleNewMessage(event: NewMessageEvent): Promise<void> {
+async function handleNewMessage(event: NewMessageEvent, bot: TelegramBotClient): Promise<void> {
   while (!shuttingDown) {
     try {
       await waitForFloodPause();
-      await processMessage(event);
+      await processMessage(event, bot);
       return;
     } catch (error) {
-      if (!isFloodWaitError(error)) {
+      const retryAfterSeconds = isFloodWaitError(error)
+        ? error.seconds
+        : error instanceof BotApiError
+          ? error.retryAfterSeconds
+          : undefined;
+
+      if (!retryAfterSeconds) {
         console.error("Failed to process Telegram message:", error);
         return;
       }
 
-      const delayMilliseconds = Math.max(1, error.seconds) * 1_000;
+      const delayMilliseconds = Math.max(1, retryAfterSeconds) * 1_000;
       floodWaitUntil = Math.max(floodWaitUntil, Date.now() + delayMilliseconds);
-      console.warn(`Telegram requested FloodWait; pausing for ${error.seconds} seconds.`);
+      console.warn(`Telegram requested a retry pause for ${retryAfterSeconds} seconds.`);
       await waitForFloodPause();
     }
   }
 }
 
 export async function startApplication(): Promise<void> {
-  const client = createTelegramClient();
+  const environment = loadEnvironment();
+  const client = createTelegramClient(environment);
+  const bot = new TelegramBotClient(environment.telegramBotToken, environment.telegramBotChatId);
+  const botIdentity = await bot.getMe();
 
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) {
@@ -125,7 +128,7 @@ export async function startApplication(): Promise<void> {
   process.once("SIGINT", () => void shutdown("SIGINT"));
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
-  client.addEventHandler((event) => void handleNewMessage(event), new NewMessage({ incoming: true }));
+  client.addEventHandler((event) => void handleNewMessage(event, bot), new NewMessage({ incoming: true }));
   await client.connect();
 
   if (!(await client.isUserAuthorized())) {
@@ -134,7 +137,7 @@ export async function startApplication(): Promise<void> {
     throw new Error("Telegram session is not authorized. Run `pnpm auth` and set TELEGRAM_STRING_SESSION.");
   }
 
-  console.info("Jobot is running and listening for new incoming messages.");
+  console.info(`Jobot is running and sends notifications through @${botIdentity.username || botIdentity.id}.`);
 }
 
 startApplication().catch((error: unknown) => {
