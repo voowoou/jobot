@@ -11,11 +11,24 @@ import { vacancyFingerprint } from "./services/fingerprint.js";
 import { formatNotification } from "./services/formatter.js";
 import { configureLogger, logEvent } from "./services/logger.js";
 import { matchVacancy } from "./services/matcher.js";
+import { ProcessingMetrics } from "./services/processing-metrics.js";
 import { createTelegramClient } from "./telegram/client.js";
 import { isAllowedSource, isVacancySource } from "./telegram/source-filter.js";
 import type { SearchProfile } from "./types/index.js";
 
 let shuttingDown = false;
+const SOURCE_CACHE_TTL_MS = 5 * 60_000;
+const sourceCache = new Map<
+	string,
+	{
+		sourceTitle: string;
+		username?: string;
+		sourceType: "group" | "supergroup" | "channel";
+		refreshedAt: number;
+		recordedAt: number;
+	}
+>();
+const processingMetrics = new ProcessingMetrics();
 
 function getInternalPostLink(chatId: string, messageId: number): string {
 	const internalChatId = chatId.replace(/^-100/, "");
@@ -34,6 +47,17 @@ async function getMessageContext(event: NewMessageEvent): Promise<{
 		throw new Error("Unable to determine the source chat ID");
 	}
 
+	const now = Date.now();
+	const cached = sourceCache.get(chatId);
+	if (cached && now - cached.refreshedAt < SOURCE_CACHE_TTL_MS)
+		return {
+			chatId,
+			directLink: cached.username
+				? `https://t.me/${cached.username}/${event.message.id}`
+				: getInternalPostLink(chatId, event.message.id),
+			sourceTitle: cached.sourceTitle,
+			sourceType: cached.sourceType,
+		};
 	let chat = await event.getChat();
 	if (!chat && event.client && event.chatId) {
 		try {
@@ -47,18 +71,26 @@ async function getMessageContext(event: NewMessageEvent): Promise<{
 			? chat.username
 			: undefined;
 
-	return {
+	const sourceType: "group" | "supergroup" | "channel" = event.isChannel
+		? event.isGroup
+			? "supergroup"
+			: "channel"
+		: "group";
+	const context = {
 		chatId,
 		directLink: username
 			? `https://t.me/${username}/${event.message.id}`
 			: getInternalPostLink(chatId, event.message.id),
 		sourceTitle: chat ? getDisplayName(chat) : "Неизвестный чат",
-		sourceType: event.isChannel
-			? event.isGroup
-				? "supergroup"
-				: "channel"
-			: "group",
+		sourceType,
 	};
+	sourceCache.set(chatId, {
+		...context,
+		username,
+		refreshedAt: now,
+		recordedAt: cached?.recordedAt ?? 0,
+	});
+	return context;
 }
 
 async function processMessage(
@@ -76,15 +108,30 @@ async function processMessage(
 	if (!chatId) {
 		throw new Error("Unable to determine the source chat ID");
 	}
+	const metadataStartedAt = performance.now();
 	const context = await getMessageContext(event);
-	db.recordRecentSource({
-		chatId: context.chatId,
-		title: context.sourceTitle,
-		type: context.sourceType,
-		lastSeenAt: Date.now(),
-	});
+	const metadataMs = performance.now() - metadataStartedAt;
+	const storageStartedAt = performance.now();
+	const cached = sourceCache.get(context.chatId);
+	if (cached && Date.now() - cached.recordedAt >= SOURCE_CACHE_TTL_MS) {
+		db.recordRecentSource({
+			chatId: context.chatId,
+			title: context.sourceTitle,
+			type: context.sourceType,
+			lastSeenAt: Date.now(),
+		});
+		cached.recordedAt = Date.now();
+	}
+	const filterStartedAt = performance.now();
 	const sourceSettings = db.getSourceSettings();
+	const filterMs = performance.now() - filterStartedAt;
 	if (!isAllowedSource(chatId, sourceSettings)) {
+		processingMetrics.record({
+			metadataMs,
+			filterMs,
+			matchingMs: 0,
+			storageMs: performance.now() - storageStartedAt,
+		});
 		db.incrementCounter("filtered");
 		logEvent("debug", "message.skipped", {
 			reason: "source_filter",
@@ -94,6 +141,12 @@ async function processMessage(
 		return;
 	}
 	if (sourceSettings.paused) {
+		processingMetrics.record({
+			metadataMs,
+			filterMs,
+			matchingMs: 0,
+			storageMs: performance.now() - storageStartedAt,
+		});
 		db.incrementCounter("filtered");
 		logEvent("debug", "message.skipped", {
 			reason: "notifications_paused",
@@ -104,6 +157,12 @@ async function processMessage(
 	}
 
 	if (db.isProcessed(context.chatId, event.message.id)) {
+		processingMetrics.record({
+			metadataMs,
+			filterMs,
+			matchingMs: 0,
+			storageMs: performance.now() - storageStartedAt,
+		});
 		logEvent("debug", "message.skipped", {
 			reason: "already_processed",
 			source: context.sourceTitle,
@@ -113,9 +172,17 @@ async function processMessage(
 		return;
 	}
 
+	const matchingStartedAt = performance.now();
 	const vacancy = matchVacancy(text, profiles, context);
+	const matchingMs = performance.now() - matchingStartedAt;
 
 	if (!vacancy) {
+		processingMetrics.record({
+			metadataMs,
+			filterMs,
+			matchingMs,
+			storageMs: performance.now() - storageStartedAt,
+		});
 		db.incrementCounter("unmatched");
 		logEvent("debug", "message.skipped", {
 			reason: "no_profile_match",
@@ -128,6 +195,12 @@ async function processMessage(
 	db.incrementCounter("matched");
 	const fingerprint = vacancyFingerprint(text);
 	if (db.isCrossChannelDedupEnabled() && db.hasFingerprint(fingerprint)) {
+		processingMetrics.record({
+			metadataMs,
+			filterMs,
+			matchingMs,
+			storageMs: performance.now() - storageStartedAt,
+		});
 		db.incrementCounter("cross_channel_deduplicated");
 		return;
 	}
@@ -139,6 +212,12 @@ async function processMessage(
 		vacancy.profileId,
 		formatNotification(vacancy),
 	);
+	processingMetrics.record({
+		metadataMs,
+		filterMs,
+		matchingMs,
+		storageMs: performance.now() - storageStartedAt,
+	});
 	logEvent("info", "vacancy.queued", {
 		source: context.sourceTitle,
 		chatId: context.chatId,
