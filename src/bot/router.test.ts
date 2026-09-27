@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { ProfileStore } from "../config/profile-store.js";
 import type { BotDialogState } from "../db/index.js";
-import { BotCommandRouter, isOwner, parseCommand } from "./router.js";
+import { BotCommandRouter, isOwner, parseCallback, parseCommand } from "./router.js";
 
 const sourceControls = {
 	getSourceSettings: () => ({ mode: "all" as const, chatIds: [], paused: false }),
@@ -23,6 +23,14 @@ test("parses bot commands and compares owner IDs as strings", () => {
 	assert.equal(parseCommand("plain text"), undefined);
 	assert.equal(isOwner("-100123", "-100123"), true);
 	assert.equal(isOwner("-100123", "100123"), false);
+});
+
+test("parses only versioned callback data with valid profile IDs", () => {
+	assert.deepEqual(parseCallback("v1:profiles"), { action: "profiles", profileId: undefined });
+	assert.deepEqual(parseCallback("v1:profile-edit:frontend_2"), { action: "profile-edit", profileId: "frontend_2" });
+	assert.equal(parseCallback("v1:profile-edit"), undefined);
+	assert.equal(parseCallback("v0:profiles"), undefined);
+	assert.equal(parseCallback("v1:profile-edit:../../secret"), undefined);
 });
 
 test("router denies non-owner and cancels only the owner's active dialog", async () => {
@@ -113,6 +121,45 @@ test("empty sources explains that all mode does not need a list", async () => {
 	);
 	await router.handle({ chatId: "1", text: "/sources" });
 	assert.match(replies[0], /режиме all список не требуется/i);
+});
+
+test("callback controls enforce ownership and require deletion confirmation", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "jobot-callback-"));
+	const replies: Array<{ text: string; markup?: unknown }> = [];
+	const answers: string[] = [];
+	const profiles = new ProfileStore(join(directory, "profiles.yaml"));
+	profiles.saveUserProfiles([{ id: "frontend", title: "Frontend", enabled: true, primary: ["react"] }]);
+	const router = new BotCommandRouter(
+		{
+			sendText: async (_chatId, text, markup) => void replies.push({ text, markup }),
+			answerCallbackQuery: async (_id, text) => void answers.push(text ?? ""),
+		},
+		{
+			...sourceControls,
+			clearBotDialog: () => false,
+			getBotDialog: () => undefined,
+			saveBotDialog: () => undefined,
+		},
+		"1",
+		profiles,
+	);
+	try {
+		await router.handleCallback({ chatId: "2", callbackId: "other", data: "v1:profile-delete:frontend" });
+		assert.equal(profiles.getUserProfiles()?.length, 1);
+		assert.equal(answers[0], "Нет доступа.");
+
+		await router.handleCallback({ chatId: "1", callbackId: "delete", data: "v1:profile-delete:frontend" });
+		assert.match(replies.at(-1)?.text ?? "", /Удалить профиль/);
+		assert.equal(profiles.getUserProfiles()?.length, 1);
+
+		await router.handleCallback({ chatId: "1", callbackId: "confirm", data: "v1:profile-delete-confirm:frontend" });
+		assert.equal(profiles.getUserProfiles()?.length, 0);
+
+		await router.handleCallback({ chatId: "1", callbackId: "stale", data: "v1:profile-edit:frontend" });
+		assert.match(replies.at(-1)?.text ?? "", /устарела/i);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 test("creates, cancels, rejects duplicate IDs, and deletes profiles through the wizard", async () => {

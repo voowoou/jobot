@@ -25,6 +25,15 @@ export interface BotUpdate {
       last_name?: string;
     };
   };
+  callback_query?: {
+    id: string;
+    data?: string;
+    message?: { chat: { id: number } };
+  };
+}
+
+export interface InlineKeyboard {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 }
 
 export class BotApiError extends Error {
@@ -49,14 +58,22 @@ export class TelegramBotClient {
   }
 
   public async getUpdates(offset?: number, timeout = 0, signal?: AbortSignal): Promise<BotUpdate[]> {
-    const parameters: Record<string, string> = { allowed_updates: JSON.stringify(["message"]) };
+    const parameters: Record<string, string> = { allowed_updates: JSON.stringify(["message", "callback_query"]) };
     if (offset !== undefined) parameters.offset = String(offset);
     if (timeout > 0) parameters.timeout = String(timeout);
     return this.call<BotUpdate[]>("getUpdates", parameters, signal);
   }
 
-  public async sendText(chatId: string, text: string): Promise<void> {
-    await this.call("sendMessage", { chat_id: chatId, text });
+  public async sendText(chatId: string, text: string, replyMarkup?: InlineKeyboard): Promise<void> {
+    const parameters: Record<string, string> = { chat_id: chatId, text };
+    if (replyMarkup) parameters.reply_markup = JSON.stringify(replyMarkup);
+    await this.call("sendMessage", parameters);
+  }
+
+  public async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
+    const parameters: Record<string, string> = { callback_query_id: callbackQueryId };
+    if (text) parameters.text = text;
+    await this.call("answerCallbackQuery", parameters);
   }
 
   public async sendNotification(text: string): Promise<void> {

@@ -2,14 +2,21 @@ import type { ProfileStore } from "../config/profile-store.js";
 import type { BotDialogState, DeduplicationStorage } from "../db/index.js";
 import { formatNotification } from "../services/formatter.js";
 import type { UserProfile } from "../types/index.js";
+import type { InlineKeyboard } from "./client.js";
 
 export interface CommandMessage {
 	chatId: string;
 	text: string;
 }
 export interface CommandReplyClient {
-	sendText(chatId: string, text: string): Promise<void>;
+	sendText(chatId: string, text: string, replyMarkup?: InlineKeyboard): Promise<void>;
 	sendNotification?(text: string): Promise<void>;
+	answerCallbackQuery?(callbackQueryId: string, text?: string): Promise<void>;
+}
+export interface CallbackQuery {
+	chatId: string;
+	callbackId: string;
+	data?: string;
 }
 type DialogStorage = Pick<
 	DeduplicationStorage,
@@ -73,6 +80,27 @@ const HELP =
 	"/start — с чего начать\n" +
 	"/help — эта справка\n" +
 	"/cancel — отменить текущую операцию";
+
+type CallbackAction = "home" | "profiles" | "sources" | "status" | "test" | "pause" | "resume" | "profile-add" | "profile-edit" | "profile-toggle" | "profile-delete" | "profile-delete-confirm" | "profile-delete-cancel";
+type Callback = { action: CallbackAction; profileId?: string };
+const callbackData = (action: string, profileId?: string) =>
+	`v1:${action}${profileId ? `:${profileId}` : ""}`;
+export function parseCallback(data: string | undefined): Callback | undefined {
+	if (!data) return undefined;
+	const match = data.match(/^v1:(home|profiles|sources|status|test|pause|resume|profile-add|profile-edit|profile-toggle|profile-delete|profile-delete-confirm|profile-delete-cancel)(?::([a-z0-9][a-z0-9_-]{0,63}))?$/i);
+	if (!match) return undefined;
+	const action = match[1] as CallbackAction;
+	const needsProfile = action.startsWith("profile-") && action !== "profile-add";
+	if (needsProfile !== Boolean(match[2])) return undefined;
+	return { action, profileId: match[2] };
+}
+const mainKeyboard = (paused: boolean): InlineKeyboard => ({
+	inline_keyboard: [
+		[{ text: "Профили", callback_data: callbackData("profiles") }, { text: "Источники", callback_data: callbackData("sources") }],
+		[{ text: "Статус", callback_data: callbackData("status") }, { text: "Тест", callback_data: callbackData("test") }],
+		[{ text: paused ? "Возобновить" : "Пауза", callback_data: callbackData(paused ? "resume" : "pause") }],
+	],
+});
 
 export function isOwner(
 	chatId: string,
@@ -149,9 +177,10 @@ export class BotCommandRouter {
 			return void (await this.client.sendText(
 				message.chatId,
 				START,
+				mainKeyboard(this.storage.getSourceSettings().paused),
 			));
 		if (command === "help")
-			return void (await this.client.sendText(message.chatId, HELP));
+			return void (await this.client.sendText(message.chatId, HELP, mainKeyboard(this.storage.getSourceSettings().paused)));
 		if (command === "cancel")
 			return void (await this.client.sendText(
 				message.chatId,
@@ -200,6 +229,37 @@ export class BotCommandRouter {
 			message.chatId,
 			"Неизвестная команда. Используйте /help.",
 		);
+	}
+	public async handleCallback(query: CallbackQuery): Promise<void> {
+		const callback = parseCallback(query.data);
+		const answer = async (text?: string) => this.client.answerCallbackQuery?.(query.callbackId, text);
+		if (!isOwner(query.chatId, this.ownerChatId)) {
+			await answer("Нет доступа.");
+			return;
+		}
+		if (!callback) {
+			await answer("Эта кнопка устарела. Откройте /start заново.");
+			return;
+		}
+		await answer();
+		if (callback.action === "home") return this.handle({ chatId: query.chatId, text: "/start" });
+		if (callback.action === "profiles") return this.sendProfiles(query.chatId);
+		if (callback.action === "sources") return this.handle({ chatId: query.chatId, text: "/sources" });
+		if (callback.action === "status") return this.handle({ chatId: query.chatId, text: "/status" });
+		if (callback.action === "test") return this.handle({ chatId: query.chatId, text: "/test" });
+		if (callback.action === "pause") return this.handle({ chatId: query.chatId, text: "/pause" });
+		if (callback.action === "resume") return this.handle({ chatId: query.chatId, text: "/resume" });
+		const profile = this.profiles?.getUserProfiles()?.find((item) => item.id === callback.profileId);
+		if (callback.action === "profile-add") return this.begin(query.chatId, { mode: "create", profile: {} }, "id");
+		if (!profile || !callback.profileId) return void (await this.client.sendText(query.chatId, "Эта кнопка устарела: профиль больше не существует. Откройте /profiles."));
+		if (callback.action === "profile-edit") return this.begin(query.chatId, { mode: "edit", originalId: profile.id, profile }, "id");
+		if (callback.action === "profile-toggle") return this.handle({ chatId: query.chatId, text: `/profiles toggle ${profile.id}` });
+		if (callback.action === "profile-delete") return void (await this.client.sendText(query.chatId, `Удалить профиль «${profile.id}»?`, { inline_keyboard: [[{ text: "Удалить", callback_data: callbackData("profile-delete-confirm", profile.id) }, { text: "Отмена", callback_data: callbackData("profile-delete-cancel", profile.id) }]] }));
+		if (callback.action === "profile-delete-cancel") return void (await this.client.sendText(query.chatId, "Удаление отменено."));
+		if (callback.action === "profile-delete-confirm") {
+			this.deleteProfile(profile.id);
+			return void (await this.client.sendText(query.chatId, `Профиль «${profile.id}» удалён.`));
+		}
 	}
 	private async sourcesCommand(message: CommandMessage): Promise<void> {
 		const [, action, chatId, ...titleParts] = message.text.trim().split(/\s+/);
@@ -273,17 +333,7 @@ export class BotCommandRouter {
 		const existing = profileStore.getUserProfiles();
 		const existingProfiles = existing ?? [];
 		if (!action)
-			return void (await this.client.sendText(
-				message.chatId,
-				!existing?.length
-					? "Пользовательских профилей нет: используется встроенный Frontend-профиль.\n\n/profiles add — создать профиль."
-					: existing
-							.map(
-								(p) =>
-									`${p.id} — ${p.title} (${p.enabled ? "включён" : "выключен"})`,
-							)
-							.join("\n"),
-			));
+			return this.sendProfiles(message.chatId);
 		if (action === "add")
 			return this.begin(message.chatId, { mode: "create", profile: {} }, "id");
 		if (!id)
@@ -320,6 +370,16 @@ export class BotCommandRouter {
 			message.chatId,
 			"Неверное действие. Например: /profiles add, /profiles edit frontend, /profiles toggle frontend или /profiles remove frontend.",
 		);
+	}
+	private async sendProfiles(chatId: string): Promise<void> {
+		const profiles = this.profiles?.getUserProfiles() ?? [];
+		const keyboard: InlineKeyboard = { inline_keyboard: [[{ text: "Создать профиль", callback_data: callbackData("profile-add") }]] };
+		for (const profile of profiles) keyboard.inline_keyboard.push([
+			{ text: `Изменить: ${profile.title}`, callback_data: callbackData("profile-edit", profile.id) },
+			{ text: profile.enabled ? "Выключить" : "Включить", callback_data: callbackData("profile-toggle", profile.id) },
+			{ text: "Удалить", callback_data: callbackData("profile-delete", profile.id) },
+		]);
+		await this.client.sendText(chatId, profiles.length ? profiles.map((profile) => `${profile.id} — ${profile.title} (${profile.enabled ? "включён" : "выключен"})`).join("\n") : "Пользовательских профилей нет: используется встроенный Frontend-профиль.", keyboard);
 	}
 	private async begin(chatId: string, draft: Draft, step: Step): Promise<void> {
 		this.storage.saveBotDialog(chatId, "profiles", step, draft);
@@ -431,10 +491,15 @@ export class BotCommandRouter {
 		this.storage.clearBotDialog(chatId);
 		if (!approved)
 			return void (await this.client.sendText(chatId, "Удаление отменено."));
-		profileStore.saveUserProfiles(
-			(profileStore.getUserProfiles() ?? []).filter((p) => p.id !== draft.id),
-		);
+		this.deleteProfile(draft.id ?? "");
 		await this.client.sendText(chatId, `Профиль «${draft.id}» удалён.`);
+	}
+	private deleteProfile(id: string): void {
+		const profileStore = this.profiles;
+		if (!profileStore) return;
+		profileStore.saveUserProfiles(
+			(profileStore.getUserProfiles() ?? []).filter((profile) => profile.id !== id),
+		);
 	}
 	public getDialog(chatId: string): BotDialogState | undefined {
 		return this.storage.getBotDialog(chatId);
