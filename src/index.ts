@@ -9,6 +9,7 @@ import { formatNotification } from "./services/formatter.js";
 import { configureLogger, logEvent } from "./services/logger.js";
 import { matchVacancy } from "./services/matcher.js";
 import { createTelegramClient } from "./telegram/client.js";
+import { isVacancySource } from "./telegram/source-filter.js";
 import type { SearchProfile } from "./types/index.js";
 
 let floodWaitUntil = 0;
@@ -198,7 +199,7 @@ export async function startApplication(): Promise<void> {
 
 	client.addEventHandler(
 		(event) => void handleNewMessage(event, bot, profiles),
-		new NewMessage({ incoming: true }),
+		new NewMessage({ incoming: true, func: isVacancySource }),
 	);
 	await client.connect();
 
@@ -214,6 +215,7 @@ export async function startApplication(): Promise<void> {
 		bot: botIdentity.username || String(botIdentity.id),
 		profileCount: profiles.length,
 		enabledProfileCount: profiles.filter((profile) => profile.enabled).length,
+		sourceScope: "groups_and_channels",
 	});
 }
 
