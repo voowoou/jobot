@@ -20,6 +20,7 @@ export interface ParsedVacancy {
   originalText: string;
   profileId: string;
   profileTitle: string;
+  sourceTitle?: string;
   grades: string[];
   workFormats: string[];
   matchedKeywords: string[];
