@@ -43,8 +43,36 @@ const steps = [
 	"confirm",
 ] as const;
 type Step = (typeof steps)[number];
+const START =
+	"Jobot присылает подходящие вакансии из групп и каналов вашего личного Telegram-аккаунта.\n\n" +
+	"С чего начать:\n" +
+	"1. Создайте профиль: /profiles add\n" +
+	"2. Посмотрите профили: /profiles\n" +
+	"3. Отправьте тестовую карточку: /test\n\n" +
+	"Источники настраиваются командой /sources. Полный список команд — /help.";
 const HELP =
-	"Команды:\n/start — приветствие\n/help — справка\n/profiles — профили\n/sources — источники\n/pause — приостановить уведомления\n/resume — продолжить уведомления\n/status — состояние\n/test — тестовая карточка\n/cancel — отменить текущую операцию";
+	"Профили\n" +
+	"/profiles — показать профили\n" +
+	"/profiles add — создать профиль\n" +
+	"/profiles edit <id> — изменить профиль, например: /profiles edit frontend\n" +
+	"/profiles toggle <id> — включить или выключить профиль, например: /profiles toggle frontend\n" +
+	"/profiles remove <id> — удалить профиль, например: /profiles remove frontend\n" +
+	"В мастере обязательные поля нельзя пропустить. Для необязательных полей отправьте «-». /cancel отменяет мастер.\n\n" +
+	"Источники\n" +
+	"/sources — показать режим и список источников\n" +
+	"/sources mode <all|allowlist|denylist> — например: /sources mode allowlist\n" +
+	"/sources add <chat_id> — например: /sources add -1001234567890\n" +
+	"/sources remove <chat_id> — например: /sources remove -1001234567890\n" +
+	"all — все группы и каналы; allowlist — только источники из списка; denylist — все, кроме списка. В режиме all список не нужен.\n\n" +
+	"Доставка\n" +
+	"/pause — приостановить уведомления\n" +
+	"/resume — возобновить уведомления\n" +
+	"/status — показать состояние\n" +
+	"/test — прислать тестовую карточку\n\n" +
+	"Прочее\n" +
+	"/start — с чего начать\n" +
+	"/help — эта справка\n" +
+	"/cancel — отменить текущую операцию";
 
 export function isOwner(
 	chatId: string,
@@ -120,8 +148,7 @@ export class BotCommandRouter {
 		if (command === "start")
 			return void (await this.client.sendText(
 				message.chatId,
-				"Jobot присылает подходящие вакансии из групп и каналов вашего личного Telegram-аккаунта.\n\n" +
-					HELP,
+				START,
 			));
 		if (command === "help")
 			return void (await this.client.sendText(message.chatId, HELP));
@@ -197,7 +224,7 @@ export class BotCommandRouter {
 		)
 			return void (await this.client.sendText(
 				message.chatId,
-				"Укажите отрицательный ID группы, супергруппы или канала. Личные диалоги добавлять нельзя.",
+				`Укажите отрицательный ID группы, супергруппы или канала. Например: /sources ${action} -1001234567890. Личные диалоги добавлять нельзя.`,
 			));
 		if (action === "add" && chatId) {
 			this.storage.addSourceChat(chatId, titleParts.join(" ") || undefined);
@@ -215,13 +242,18 @@ export class BotCommandRouter {
 			));
 		await this.client.sendText(
 			message.chatId,
-			"Используйте /sources, /sources mode <all|allowlist|denylist>, /sources add <chat_id> или /sources remove <chat_id>.",
+			"Неверные аргументы. Например: /sources mode allowlist, /sources add -1001234567890 или /sources remove -1001234567890.",
 		);
 	}
 	private sourcesText(): string {
 		const settings = this.storage.getSourceSettings();
 		const chats = this.storage.listSourceChats();
-		return `Режим: ${settings.mode}\nВыбранные источники:\n${chats.length ? chats.map((chat) => `${chat.chat_id}${chat.title ? ` — ${chat.title}` : ""}`).join("\n") : "—"}`;
+		const list = chats.length
+			? chats
+					.map((chat) => `${chat.chat_id}${chat.title ? ` — ${chat.title}` : ""}`)
+					.join("\n")
+			: "—";
+		return `Режим: ${settings.mode}\nВыбранные источники:\n${list}${settings.mode === "all" ? "\n\nВ режиме all список не требуется: обрабатываются все группы и каналы." : ""}`;
 	}
 	private statusText(): string {
 		const settings = this.storage.getSourceSettings();
@@ -257,7 +289,7 @@ export class BotCommandRouter {
 		if (!id)
 			return void (await this.client.sendText(
 				message.chatId,
-				"Укажите ID профиля.",
+				`Укажите ID профиля. Например: /profiles ${action} frontend.`,
 			));
 		const profile = existingProfiles.find((p) => p.id === id);
 		if (!profile)
@@ -286,7 +318,7 @@ export class BotCommandRouter {
 			return this.begin(message.chatId, { mode: "delete", id }, "confirm");
 		await this.client.sendText(
 			message.chatId,
-			"Используйте add, edit, toggle или remove.",
+			"Неверное действие. Например: /profiles add, /profiles edit frontend, /profiles toggle frontend или /profiles remove frontend.",
 		);
 	}
 	private async begin(chatId: string, draft: Draft, step: Step): Promise<void> {

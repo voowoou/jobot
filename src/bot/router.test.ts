@@ -76,6 +76,45 @@ test("start gives setup guidance only while owner is unconfigured", async () => 
 	assert.match(replies[0], /TELEGRAM_BOT_CHAT_ID/);
 });
 
+test("onboarding and help expose the next actions and command arguments", async () => {
+	const replies: string[] = [];
+	const router = new BotCommandRouter(
+		{ sendText: async (_chatId, text) => void replies.push(text) },
+		{
+			...sourceControls,
+			clearBotDialog: () => false,
+			getBotDialog: () => undefined,
+			saveBotDialog: () => undefined,
+		},
+		"1",
+	);
+	await router.handle({ chatId: "1", text: "/start" });
+	await router.handle({ chatId: "1", text: "/help" });
+	assert.match(replies[0], /\/profiles add/);
+	assert.match(replies[0], /\/profiles/);
+	assert.match(replies[0], /\/test/);
+	assert.match(replies[1], /\/profiles edit <id>/);
+	assert.match(replies[1], /\/sources mode <all\|allowlist\|denylist>/);
+	assert.match(replies[1], /режиме all список не нужен/i);
+	assert.match(replies[1], /отправьте «-»/);
+});
+
+test("empty sources explains that all mode does not need a list", async () => {
+	const replies: string[] = [];
+	const router = new BotCommandRouter(
+		{ sendText: async (_chatId, text) => void replies.push(text) },
+		{
+			...sourceControls,
+			clearBotDialog: () => false,
+			getBotDialog: () => undefined,
+			saveBotDialog: () => undefined,
+		},
+		"1",
+	);
+	await router.handle({ chatId: "1", text: "/sources" });
+	assert.match(replies[0], /режиме all список не требуется/i);
+});
+
 test("creates, cancels, rejects duplicate IDs, and deletes profiles through the wizard", async () => {
 	const directory = mkdtempSync(join(tmpdir(), "jobot-router-"));
 	let dialog: BotDialogState | undefined;
