@@ -1,0 +1,13 @@
+# Secrets and Telegram credentials
+.env
+*.session
+
+# Generated application data
+*.db
+data/
+dist/
+
+# Dependencies and logs
+node_modules/
+.pnpm-store/
+*.log
